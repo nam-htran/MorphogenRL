@@ -117,20 +117,10 @@ def main(args):
 
     config = (
         PPOConfig()
-        .environment(
-            env=env_name,
-            env_config=env_config,
-            normalize_actions=True
-        )
+        .environment(env=env_name, env_config=env_config)
         .env_runners(num_env_runners=args.num_workers, rollout_fragment_length="auto")
         .framework("torch")
-        .training(
-            lr=1e-5,
-            grad_clip=0.5,
-            grad_clip_by="norm",
-            vf_clip_param=100.0,
-            entropy_coeff=0.01
-        )
+        .training(model={"fcnet_hiddens": [256, 256], "fcnet_activation": "tanh"})
         .multi_agent(
             policies={f"agent_{i}": PolicySpec(observation_space=obs_space, action_space=act_space) for i in range(args.n_agents)},
             policy_mapping_fn=lambda agent_id, *a, **kw: agent_id,
