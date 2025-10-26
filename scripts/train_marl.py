@@ -117,13 +117,19 @@ def main(args):
 
     config = (
         PPOConfig()
-        .environment(env=env_name, env_config=env_config)
+        .environment(
+            env=env_name,
+            env_config=env_config,
+            normalize_actions=True
+        )
         .env_runners(num_env_runners=args.num_workers, rollout_fragment_length="auto")
         .framework("torch")
         .training(
-            lr=0.0001,
+            lr=1e-5,
             grad_clip=0.5,
-            grad_clip_by="norm"
+            grad_clip_by="norm",
+            vf_clip_param=100.0,
+            entropy_coeff=0.01
         )
         .multi_agent(
             policies={f"agent_{i}": PolicySpec(observation_space=obs_space, action_space=act_space) for i in range(args.n_agents)},
