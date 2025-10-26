@@ -50,8 +50,28 @@ conda create -n morphogenrl python=3.11
 conda activate morphogenrl
 ```
 
+> **Important Prerequisite: SWIG Installation**
+> Before installing the Python packages, you must install SWIG, which is a dependency for the Box2D physics engine used in the environments. The version used during development was **4.0.2**.
+> 
+> **On Linux (Ubuntu/Debian):**
+> Open your terminal and run the following command to install SWIG and CMake:
+> ```bash
+> sudo apt-get update && sudo apt-get install swig cmake
+> ```
+> 
+> **On Windows:**
+> 1.  Download SWIG for Windows from the [official SWIG website](http://www.swig.org/download.html). Look for `swigwin` (e.g., `swigwin-4.0.2.zip`).
+> 2.  Extract the ZIP file to a permanent location on your computer, for example, `C:\swigwin-4.0.2`.
+> 3.  Add the SWIG directory to your system's `PATH` environment variable:
+>     -   Search for "Edit the system environment variables" in the Start Menu and open it.
+>     -   Click on the "Environment Variables..." button.
+>     -   In the "System variables" section, find and select the `Path` variable, then click "Edit...".
+>     -   Click "New" and paste the full path to your SWIG directory (e.g., `C:\swigwin-4.0.2`).
+>     -   Click OK to close all windows.
+> 4.  **Verify the installation:** Open a **new** Command Prompt or PowerShell window and run `swig -version`. If it shows the version number, the installation was successful.
+
 **3. Install Dependencies**
-Install all the required Python packages using pip.
+Once SWIG is installed and configured, install all the required Python packages using pip.
 ```bash
 pip install -r requirements.txt
 ```
