@@ -1,0 +1,97 @@
+# ============================================================================ #
+#                            Python & Dependencies                             #
+# ============================================================================ #
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+*$py.class
+
+# C extensions
+*.so
+
+# Distribution / packaging
+.Python
+env/
+venv/
+ENV/
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+*.egg-info/
+.installed.cfg
+*.egg
+
+# Installer logs
+pip-log.txt
+pip-delete-this-directory.txt
+
+# Virtual environment folders
+.env
+.venv
+venv.bak
+.direnv/
+
+# ============================================================================ #
+#                         Project-Specific & ML Files                          #
+# ============================================================================ #
+# Output directories for models, logs, and recordings
+output/
+recordings/
+logs/
+_utils/
+
+# Ray logs and temporary files
+ray_results/
+/tmp/ray/
+
+# Jupyter Notebook checkpoints
+.ipynb_checkpoints
+
+# Test reports
+htmlcov/
+.tox/
+.coverage
+.coverage.*
+.cache
+nosetests.xml
+coverage.xml
+*,cover
+.hypothesis/
+
+# ============================================================================ #
+#                            IDE / Editor Config                               #
+# ============================================================================ #
+# Visual Studio Code
+.vscode/*
+!.vscode/settings.json
+!.vscode/tasks.json
+!.vscode/launch.json
+!.vscode/extensions.json
+
+# PyCharm
+.idea/
+
+# Spyder
+.spyderproject/
+.ropeproject/
+
+# ============================================================================ #
+#                            Operating System Files                            #
+# ============================================================================ #
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+
+# Windows
+Thumbs.db
+ehthumbs.db
+Desktop.ini

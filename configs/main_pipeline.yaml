@@ -1,0 +1,30 @@
+WATCH:
+  num_episodes: 3
+  fullscreen: false
+
+PPO:
+  enabled: true
+  run_id: "ppo_initial_run"
+  body: "classic_bipedal"
+  env: "parkour"
+  total_timesteps: 300000 
+  save_freq_ratio: 0.2
+
+ACL:
+  enabled: true
+  run_id: "acl_initial_run"
+  body: "climbing_profile_chimpanzee"
+  env: "parkour"
+  total_stages: 50 
+  student_steps_per_stage: 16384
+  eval_episodes: 5
+  mastery_threshold: 150.0 
+  difficulty_increment: 0.02
+
+MARL:
+  enabled: true
+  run_id: "marl_initial_run"
+  mode: "interactive"
+  n_agents: 2
+  body: "classic_bipedal"
+  iterations: 50
