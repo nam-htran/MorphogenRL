@@ -7,6 +7,8 @@ import torch
 from ray.rllib.algorithms.ppo import PPOConfig
 from ray.rllib.policy.policy import PolicySpec
 from ray.tune.registry import register_env
+from gymnasium.wrappers import TransformObservation
+import numpy as np
 
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
@@ -15,7 +17,49 @@ from TeachMyAgent.environments.envs.multi_agent_parametric_parkour import MultiA
 from TeachMyAgent.environments.envs.interactive_multi_agent_parkour import InteractiveMultiAgentParkour
 from utils.env_utils import get_screen_resolution, setup_render_window as setup_render_window_util
 
+from ray.rllib.env.multi_agent_env import MultiAgentEnv
 
+class RLLibMultiAgentWrapper(MultiAgentEnv):
+    def __init__(self, env):
+        self.env = env
+        self._render_stopped_agent = True
+        
+        self.observation_space = self.env.observation_space
+        self.action_space = self.env.action_space
+        self.agents = getattr(self.env.unwrapped, 'agents', None)
+        self.possible_agents = getattr(self.env.unwrapped, 'possible_agents', None)
+        self._agent_ids = set(self.agents)
+
+        self._terminateds = {}
+        self._truncateds = {}
+
+        super().__init__()
+
+    def reset(self, *, seed=None, options=None):
+        self._terminateds = {agent_id: False for agent_id in self.agents}
+        self._truncateds = {agent_id: False for agent_id in self.agents}
+        return self.env.reset(seed=seed, options=options)
+
+    def step(self, action_dict):
+        obs, rewards, terminateds, truncateds, infos = self.env.step(action_dict)
+
+        filtered_obs = {
+            agent_id: agent_obs
+            for agent_id, agent_obs in obs.items()
+            if not self._terminateds.get(agent_id, False) and not self._truncateds.get(agent_id, False)
+        }
+        
+        self._terminateds = terminateds.copy()
+        self._truncateds = truncateds.copy()
+
+        return filtered_obs, rewards, terminateds, truncateds, infos
+    
+    def render(self):
+        return self.env.render()
+
+    def close(self):
+        return self.env.close()
+    
 def add_marl_args(parser):
     parser.add_argument("--mode", type=str, default="cooperative", choices=["cooperative", "interactive"], help="Environment mode.")
     parser.add_argument("--n-agents", type=int, default=2, help="Number of agents.")
@@ -29,15 +73,42 @@ def add_marl_args(parser):
     parser.add_argument("--run_id", type=str, default="marl_run1", help="Run identifier.")
     return parser
 
+import gymnasium as gym
+
+class AddAgentsAndPossibleAgentsWrapper(gym.Wrapper):
+    def __init__(self, env, n_agents):
+        super().__init__(env)
+        self.agents = [f"agent_{i}" for i in range(n_agents)]
+        self.possible_agents = self.agents[:]
+        self._agent_ids = set(self.agents)
 
 def get_env_creator(mode):
     if mode == "cooperative":
-        return lambda config: MultiAgentParkour(config=config)
+        base_env_creator_func = lambda config: MultiAgentParkour(config=config)
     elif mode == "interactive":
-        return lambda config: InteractiveMultiAgentParkour(config=config)
+        base_env_creator_func = lambda config: InteractiveMultiAgentParkour(config=config)
     else:
         raise ValueError(f"Invalid mode: '{mode}'. Use 'cooperative' or 'interactive'.")
 
+    def wrapped_env_creator(config):
+        base_env = base_env_creator_func(config)
+
+        def clip_multi_agent_obs(obs_dict):
+            return {
+                agent_id: np.clip(agent_obs, -10.0, 10.0)
+                for agent_id, agent_obs in obs_dict.items()
+            }
+
+        clipped_env = TransformObservation(
+            base_env, clip_multi_agent_obs, base_env.observation_space
+        )
+        
+        final_env = RLLibMultiAgentWrapper(clipped_env)
+        # =======================
+
+        return final_env
+
+    return wrapped_env_creator
 
 def check_environment_mode(args):
     print("\n" + "=" * 60)
@@ -117,10 +188,19 @@ def main(args):
 
     config = (
         PPOConfig()
-        .environment(env=env_name, env_config=env_config)
+        .environment(env=env_name, env_config=env_config, normalize_actions=True)
         .env_runners(num_env_runners=args.num_workers, rollout_fragment_length="auto")
         .framework("torch")
-        .training(model={"fcnet_hiddens": [256, 256], "fcnet_activation": "tanh"})
+        .training(
+            lr=1e-5,
+            grad_clip=0.5,
+            grad_clip_by="norm",
+            vf_clip_param=100.0,
+            entropy_coeff=0.01,
+            model={
+                "fcnet_hiddens": [256, 256],
+                "fcnet_activation": "tanh",
+            })
         .multi_agent(
             policies={f"agent_{i}": PolicySpec(observation_space=obs_space, action_space=act_space) for i in range(args.n_agents)},
             policy_mapping_fn=lambda agent_id, *a, **kw: agent_id,
@@ -133,8 +213,25 @@ def main(args):
 
     for i in range(args.iterations):
         result = algo.train()
-        reward_mean = result.get("env_runners", {}).get("episode_reward_mean", float("nan"))
-        print(f"Iteration {i + 1}/{args.iterations}: reward_mean={reward_mean:.4f}")
+        env_runner_results = result.get("env_runners", {})
+
+        episode_reward_mean = env_runner_results.get("episode_return_mean", float("nan"))
+
+        per_policy_rewards = env_runner_results.get("module_episode_returns_mean", {})
+
+        learner_results = result.get("learners", {})
+        agent_0_stats = learner_results.get("agent_0", {})
+        total_loss_agent_0 = agent_0_stats.get("total_loss", float("nan"))
+        agent_1_stats = learner_results.get("agent_1", {})
+        total_loss_agent_1 = agent_1_stats.get("total_loss", float("nan"))
+
+        print(
+            f"Iteration {i + 1}/{args.iterations}: "
+            f"Episode Reward Mean: {episode_reward_mean:.2f}, "
+            f"Per-Policy Rewards: {per_policy_rewards}, "
+            f"Loss(agent_0): {total_loss_agent_0:.4f}, "
+            f"Loss(agent_1): {total_loss_agent_1:.4f}"
+        )
 
     checkpoint_dir = algo.save().checkpoint.path
     print(f"\n✅ Checkpoint saved at: {checkpoint_dir}")

@@ -926,6 +926,8 @@ import torch
 from ray.rllib.algorithms.ppo import PPOConfig
 from ray.rllib.policy.policy import PolicySpec
 from ray.tune.registry import register_env
+from gymnasium.wrappers import TransformObservation
+import numpy as np
 
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
@@ -951,11 +953,33 @@ def add_marl_args(parser):
 
 def get_env_creator(mode):
     if mode == "cooperative":
-        return lambda config: MultiAgentParkour(config=config)
+        base_env_creator_func = lambda config: MultiAgentParkour(config=config)
     elif mode == "interactive":
-        return lambda config: InteractiveMultiAgentParkour(config=config)
+        base_env_creator_func = lambda config: InteractiveMultiAgentParkour(config=config)
     else:
         raise ValueError(f"Invalid mode: '{mode}'. Use 'cooperative' or 'interactive'.")
+
+    def wrapped_env_creator(config):
+        base_env = base_env_creator_func(config)
+
+        # HÀM CLIP MỚI - XỬ LÝ ĐÚNG DICTIONARY
+        def clip_multi_agent_obs(obs_dict):
+            # Lặp qua từng cặp (agent_id, observation_array) trong dictionary
+            # và clip giá trị của observation_array.
+            # Đây được gọi là "dictionary comprehension".
+            return {
+                agent_id: np.clip(agent_obs, -10.0, 10.0)
+                for agent_id, agent_obs in obs_dict.items()
+            }
+
+        # Sử dụng hàm mới này trong TransformObservation
+        wrapped_env = TransformObservation(
+            base_env, clip_multi_agent_obs, base_env.observation_space
+        )
+
+        return wrapped_env
+
+    return wrapped_env_creator
 
 
 def check_environment_mode(args):
@@ -1036,10 +1060,19 @@ def main(args):
 
     config = (
         PPOConfig()
-        .environment(env=env_name, env_config=env_config)
+        .environment(env=env_name, env_config=env_config, normalize_actions=True)
         .env_runners(num_env_runners=args.num_workers, rollout_fragment_length="auto")
         .framework("torch")
-        .training(model={"fcnet_hiddens": [256, 256], "fcnet_activation": "tanh"})
+        .training(
+            lr=1e-5,
+            grad_clip=0.5,
+            grad_clip_by="norm",
+            vf_clip_param=100.0,
+            entropy_coeff=0.01,
+            model={
+                "fcnet_hiddens": [256, 256],
+                "fcnet_activation": "tanh",
+            })
         .multi_agent(
             policies={f"agent_{i}": PolicySpec(observation_space=obs_space, action_space=act_space) for i in range(args.n_agents)},
             policy_mapping_fn=lambda agent_id, *a, **kw: agent_id,
