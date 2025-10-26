@@ -18,7 +18,7 @@ ACL:
   total_stages: 50 
   student_steps_per_stage: 16384
   eval_episodes: 5
-  mastery_threshold: 150.0 
+  mastery_threshold: 50.0 
   difficulty_increment: 0.02
 
 MARL:

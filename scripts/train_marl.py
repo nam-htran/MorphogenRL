@@ -120,7 +120,11 @@ def main(args):
         .environment(env=env_name, env_config=env_config)
         .env_runners(num_env_runners=args.num_workers, rollout_fragment_length="auto")
         .framework("torch")
-        .training(model={"fcnet_hiddens": [256, 256], "fcnet_activation": "tanh"})
+        .training(
+            lr=0.0001,
+            grad_clip=0.5,
+            grad_clip_by="norm"
+        )
         .multi_agent(
             policies={f"agent_{i}": PolicySpec(observation_space=obs_space, action_space=act_space) for i in range(args.n_agents)},
             policy_mapping_fn=lambda agent_id, *a, **kw: agent_id,
