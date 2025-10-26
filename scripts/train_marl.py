@@ -1,3 +1,4 @@
+# scripts/train_marl.py
 import argparse
 import os
 import sys
@@ -26,8 +27,10 @@ class RLLibMultiAgentWrapper(MultiAgentEnv):
         
         self.observation_space = self.env.observation_space
         self.action_space = self.env.action_space
-        self.agents = getattr(self.env.unwrapped, 'agents', None)
-        self.possible_agents = getattr(self.env.unwrapped, 'possible_agents', None)
+        
+        # ВИПРАВЛЕННЯ: Додано атрибути agents та possible_agents
+        self.agents = self.env.unwrapped.possible_agents
+        self.possible_agents = self.env.unwrapped.possible_agents
         self._agent_ids = set(self.agents)
 
         self._terminateds = {}
@@ -38,19 +41,37 @@ class RLLibMultiAgentWrapper(MultiAgentEnv):
     def reset(self, *, seed=None, options=None):
         self._terminateds = {agent_id: False for agent_id in self.agents}
         self._truncateds = {agent_id: False for agent_id in self.agents}
-        return self.env.reset(seed=seed, options=options)
+        
+        # ВИПРАВЛЕННЯ: Переконайтеся, що reset середовища встановлює активних агентів
+        obs, info = self.env.reset(seed=seed, options=options)
+        self.agents = self.env.unwrapped.agents # Оновіть список активних агентів
+        return obs, info
 
     def step(self, action_dict):
-        obs, rewards, terminateds, truncateds, infos = self.env.step(action_dict)
+        # ВИПРАВЛЕННЯ: Фільтруйте дії для неактивних агентів
+        active_actions = {
+            agent_id: action
+            for agent_id, action in action_dict.items()
+            if not self._terminateds.get(agent_id, False) and not self._truncateds.get(agent_id, False)
+        }
+        
+        obs, rewards, terminateds, truncateds, infos = self.env.step(active_actions)
 
+        # ВИПРАВЛЕННЯ: Фільтруйте спостереження для завершених агентів
         filtered_obs = {
             agent_id: agent_obs
             for agent_id, agent_obs in obs.items()
             if not self._terminateds.get(agent_id, False) and not self._truncateds.get(agent_id, False)
         }
         
-        self._terminateds = terminateds.copy()
-        self._truncateds = truncateds.copy()
+        self._terminateds.update(terminateds)
+        self._truncateds.update(truncateds)
+
+        # ВИПРАВЛЕННЯ: Оновіть список активних агентів
+        self.agents = [
+            agent_id for agent_id in self.possible_agents 
+            if not self._terminateds.get(agent_id, False) and not self._truncateds.get(agent_id, False)
+        ]
 
         return filtered_obs, rewards, terminateds, truncateds, infos
     
