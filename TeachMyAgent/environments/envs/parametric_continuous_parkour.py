@@ -1,5 +1,7 @@
+# TeachMyAgent/environments/envs/parametric_continuous_parkour.py
 import math
 import os
+
 import Box2D
 import gymnasium as gym
 import numpy as np
@@ -55,7 +57,8 @@ class ContactDetector(WaterContactDetector, ClimbingContactDetector):
             ClimbingContactDetector.EndContact(self, contact)
         else:
             for body in bodies:
-                if (body.userData.object_type == CustomUserDataObjectTypes.BODY_OBJECT and
+                if (hasattr(body.userData, 'object_type') and
+                        body.userData.object_type == CustomUserDataObjectTypes.BODY_OBJECT and
                         body.userData.check_contact):
                     body.userData.has_contact = False
 
@@ -76,8 +79,9 @@ class LidarCallback(Box2D.b2.rayCastCallback):
             return -1
         self.p2 = point
         self.fraction = fraction
-        self.is_water_detected = True if hasattr(fixture.body.userData, 'object_type') and fixture.body.userData.object_type == CustomUserDataObjectTypes.WATER else False
-        self.is_creeper_detected = True if hasattr(fixture.body.userData, 'object_type') and fixture.body.userData.object_type == CustomUserDataObjectTypes.SENSOR_GRIP_TERRAIN else False
+        if hasattr(fixture.body.userData, 'object_type'):
+            self.is_water_detected = fixture.body.userData.object_type == CustomUserDataObjectTypes.WATER
+            self.is_creeper_detected = fixture.body.userData.object_type == CustomUserDataObjectTypes.SENSOR_GRIP_TERRAIN
         return fraction
 
 FPS    = 50
@@ -95,6 +99,7 @@ INITIAL_TERRAIN_STARTPAD = 20
 FRICTION = 2.5
 WATER_DENSITY = 1.0
 NB_FIRST_STEPS_HANG = 5
+HULL_CONTACT_PENALTY = 0.1
 
 class ParametricContinuousParkour(gym.Env, EzPickle):
     metadata = {'render_modes': ['human', 'rgb_array'], 'video.frames_per_second': FPS}
@@ -102,12 +107,14 @@ class ParametricContinuousParkour(gym.Env, EzPickle):
     def __init__(self, agent_body_type, CPPN_weights_path=None, input_CPPN_dim=3,
                  terrain_cppn_scale=10, ceiling_offset=200, ceiling_clip_offset=0,
                  lidars_type='full', water_clip=20, movable_creepers=False,
-                 render_mode=None, **walker_args):
+                 render_mode=None, horizon=3000, **walker_args):
 
         super().__init__()
         self.rendering_viewer_w = VIEWPORT_W
         self.rendering_viewer_h = VIEWPORT_H
         self.render_mode = render_mode
+        self.horizon = horizon
+        self.ts = 0
 
         self.np_random = None
         if lidars_type == "down":
@@ -215,13 +222,15 @@ class ParametricContinuousParkour(gym.Env, EzPickle):
             return
         self.world.contactListener = None
         for t in self.terrain:
-            self.world.DestroyBody(t)
+            if t: self.world.DestroyBody(t)
         self.terrain = []
-        self.agent_body.destroy(self.world)
+        if self.agent_body: self.agent_body.destroy(self.world)
 
     def reset(self, seed=None, options=None):
         super().reset(seed=seed)
         self._destroy()
+
+        self.ts = 0
 
         self.world = Box2D.b2World(contactListener=self.contact_listener)
         self.world.contactListener = self.contact_listener
@@ -266,9 +275,13 @@ class ParametricContinuousParkour(gym.Env, EzPickle):
         self.nb_steps_outside_water = 0
         self.nb_steps_under_water = 0
         self.episodic_reward = 0
+        self.ts = 0
+        
         return np.array(initial_state, dtype=np.float32), {}
 
     def step(self, action):
+        self.ts += 1
+        
         is_agent_dead = False
         if hasattr(self.agent_body, "nb_steps_can_survive_outside_water") and \
                         self.nb_steps_outside_water > self.agent_body.nb_steps_can_survive_outside_water:
@@ -315,16 +328,13 @@ class ParametricContinuousParkour(gym.Env, EzPickle):
                 self.nb_steps_under_water = 0
 
         state = [
-            head.angle,
-            2.0 * head.angularVelocity / FPS,
+            head.angle, 2.0 * head.angularVelocity / FPS,
             0.3 * vel.x * (VIEWPORT_W / SCALE) / FPS,
             0.3 * vel.y * (VIEWPORT_H / SCALE) / FPS,
             1.0 if is_under_water else 0.0,
             1.0 if is_agent_dead else 0.0
         ]
-
         state.extend(self.agent_body.get_motors_state())
-
         if self.agent_body.body_type == BodyTypesEnum.CLIMBER:
             state.extend(self.agent_body.get_sensors_state())
 
@@ -354,6 +364,11 @@ class ParametricContinuousParkour(gym.Env, EzPickle):
         for a in action:
             reward -= self.agent_body.TORQUE_PENALTY * 80 * np.clip(np.abs(a), 0, 1)
 
+        hull = self.agent_body.body_parts[0]
+        if hasattr(hull.userData, 'has_contact') and hull.userData.has_contact:
+            if self.agent_body.body_type == BodyTypesEnum.WALKER:
+                 reward -= HULL_CONTACT_PENALTY
+
         terminated = False
         if self.critical_contact or pos[0] < 0 or is_agent_dead:
             reward = -100
@@ -363,13 +378,14 @@ class ParametricContinuousParkour(gym.Env, EzPickle):
             terminated = True
         self.episodic_reward += reward
 
-        truncated = self.episodic_reward > 230
+        truncated = self.ts >= self.horizon
         
         if self.render_mode == "human":
             self.render()
 
-        return np.array(state, dtype=np.float32), reward, terminated, truncated, {}
-
+        info = {"success": self.episodic_reward > 230}
+        return np.array(state, dtype=np.float32), reward, terminated, truncated, info
+    
     def _generate_terrain(self):
         self.cloud_poly = []
         self.terrain_x = []
@@ -559,7 +575,7 @@ class ParametricContinuousParkour(gym.Env, EzPickle):
         for obj in self.drawlist:
             color1 = obj.color1
             color2 = obj.color2
-            if hasattr(obj.userData, 'object_type') and obj.userData.object_type == CustomUserDataObjectTypes.BODY_SENSOR and obj.userData.has_joint:
+            if hasattr(obj.userData, 'object_type') and obj.userData.object_type == CustomUserDataObjectTypes.BODY_SENSOR and hasattr(obj.userData, 'has_joint') and obj.userData.has_joint:
                 color1 = (1.0, 1.0, 0.0)
                 color2 = (1.0, 1.0, 0.0)
             elif obj == self.agent_body.reference_head_object:

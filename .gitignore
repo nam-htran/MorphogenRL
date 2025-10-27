@@ -46,7 +46,6 @@ venv.bak
 output/
 recordings/
 logs/
-_utils/
 
 # Ray logs and temporary files
 ray_results/

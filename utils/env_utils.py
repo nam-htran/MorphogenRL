@@ -1,4 +1,4 @@
-# env_utils.py
+# utils/env_utils.py
 import gymnasium as gym
 import numpy as np
 import tkinter as tk
@@ -43,7 +43,7 @@ def collect_env_params(env_key, args):
     
     return params
 
-def build_and_setup_env(env_key, body_name, user_params, render_mode=None):
+def build_and_setup_env(env_key, body_name, user_params, render_mode=None, args=None):
     """Create and configure the environment with default and user parameters."""
     
     mapping = {
@@ -59,6 +59,9 @@ def build_and_setup_env(env_key, body_name, user_params, render_mode=None):
     if render_mode:
         env_kwargs['render_mode'] = render_mode
         
+    if args and hasattr(args, 'horizon') and args.horizon is not None:
+        env_kwargs['horizon'] = args.horizon
+
     if env_key == "parkour":
         body_type = BodiesEnum.get_body_type(body_name)
         lidar_map = {BodyTypesEnum.CLIMBER: 'up', BodyTypesEnum.SWIMMER: 'full'}
@@ -72,7 +75,6 @@ def build_and_setup_env(env_key, body_name, user_params, render_mode=None):
     
     env = gym.make(env_id, **env_kwargs)
     
-    # --- Apply default and user-defined parameters ---
     if env_key == "stump":
         default_params = {"roughness": 0.0, "stump_height": (0.1, 0.05)}
         default_params.update(user_params)

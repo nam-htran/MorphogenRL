@@ -1,3 +1,4 @@
+# ===== .\scripts\watch.py =====
 # scripts/watch.py
 import argparse
 import time
@@ -27,7 +28,8 @@ def add_watch_args(parser):
     parser = add_render_args(parser)
 
     watch_group = parser.add_argument_group('Playback Parameters')
-    watch_group.add_argument('--num_episodes', type=int, default=10, help="Number of episodes to watch.")
+    # SỬA LỖI: Thay đổi '--num_episodes' thành '--num-episodes' để khớp với cách dùng phổ biến
+    watch_group.add_argument('--num-episodes', type=int, default=10, help="Number of episodes to watch.")
     watch_group.add_argument('--timeout', type=int, default=2000, help="Max steps per episode (safety timeout).")
     watch_group.add_argument('--auto-skip-stuck', action='store_true', help="Automatically skip if agent gets stuck.")
     watch_group.add_argument('--fast-forward', '-ff', action='store_true', help="Skip frame delays for fast playback.")
@@ -56,7 +58,8 @@ def main(args):
         print("Loading model...")
         model = PPO.load(args.model_path)
         print("Model loaded successfully.")
-
+        
+        # Argparse tự động chuyển đổi 'num-episodes' thành 'num_episodes' khi truy cập
         for i in range(args.num_episodes):
             obs, info = env.reset()
             done = False

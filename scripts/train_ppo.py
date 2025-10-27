@@ -4,7 +4,6 @@ import sys
 import argparse
 import time
 
-# Add root folder to import path
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from stable_baselines3 import PPO
@@ -26,6 +25,7 @@ def add_ppo_args(parser):
     train_group.add_argument('--save_freq', type=int, default=50_000)
     train_group.add_argument('--n_envs', type=int, default=4)
     train_group.add_argument('--render', action='store_true')
+    parser.add_argument('--horizon', type=int, default=3000, help="Max steps per episode.")
     return parser
 
 
@@ -41,13 +41,17 @@ def main(args):
         args.n_envs = 1
 
     user_params = collect_env_params(args.env, args)
-    env_lambda = lambda: build_and_setup_env(args.env, args.body, user_params, render_mode=train_render_mode)
+    env_lambda = lambda: build_and_setup_env(args.env, args.body, user_params, render_mode=train_render_mode, args=args)
     env = make_vec_env(env_lambda, n_envs=args.n_envs)
 
     if args.render:
         setup_render_window(env.envs[0], args)
+    
+    ppo_kwargs = getattr(args, 'ppo_config', {})
+    print("Using PPO hyperparameters:", ppo_kwargs)
 
-    model = PPO("MlpPolicy", env, verbose=1, tensorboard_log=os.path.join(output_base_dir, "logs"))
+    model = PPO("MlpPolicy", env, verbose=1, tensorboard_log=os.path.join(output_base_dir, "logs"), **ppo_kwargs)
+    
     checkpoint_callback = CheckpointCallback(
         save_freq=max(args.save_freq // args.n_envs, 1),
         save_path=model_dir,

@@ -5,264 +5,288 @@ import sys
 import time
 import ray
 import torch
+from collections.abc import Mapping
+from ray import tune, air
 from ray.rllib.algorithms.ppo import PPOConfig
 from ray.rllib.policy.policy import PolicySpec
 from ray.tune.registry import register_env
 from gymnasium.wrappers import TransformObservation
 import numpy as np
+import gymnasium as gym
+
+from ray.rllib.utils.metrics import (
+    ENV_RUNNER_RESULTS,
+    EPISODE_RETURN_MEAN,
+    LEARNER_RESULTS,
+    ALL_MODULES,
+)
 
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import TeachMyAgent.environments
 from TeachMyAgent.environments.envs.multi_agent_parametric_parkour import MultiAgentParkour
 from TeachMyAgent.environments.envs.interactive_multi_agent_parkour import InteractiveMultiAgentParkour
-from utils.env_utils import get_screen_resolution, setup_render_window as setup_render_window_util
+from utils.env_utils import setup_render_window as setup_render_window_util
 
-from ray.rllib.env.multi_agent_env import MultiAgentEnv
-
-class RLLibMultiAgentWrapper(MultiAgentEnv):
-    def __init__(self, env):
-        self.env = env
-        self._render_stopped_agent = True
-        
-        self.observation_space = self.env.observation_space
-        self.action_space = self.env.action_space
-        
-        # ВИПРАВЛЕННЯ: Додано атрибути agents та possible_agents
-        self.agents = self.env.unwrapped.possible_agents
-        self.possible_agents = self.env.unwrapped.possible_agents
-        self._agent_ids = set(self.agents)
-
-        self._terminateds = {}
-        self._truncateds = {}
-
-        super().__init__()
-
-    def reset(self, *, seed=None, options=None):
-        self._terminateds = {agent_id: False for agent_id in self.agents}
-        self._truncateds = {agent_id: False for agent_id in self.agents}
-        
-        # ВИПРАВЛЕННЯ: Переконайтеся, що reset середовища встановлює активних агентів
-        obs, info = self.env.reset(seed=seed, options=options)
-        self.agents = self.env.unwrapped.agents # Оновіть список активних агентів
-        return obs, info
-
-    def step(self, action_dict):
-        # ВИПРАВЛЕННЯ: Фільтруйте дії для неактивних агентів
-        active_actions = {
-            agent_id: action
-            for agent_id, action in action_dict.items()
-            if not self._terminateds.get(agent_id, False) and not self._truncateds.get(agent_id, False)
-        }
-        
-        obs, rewards, terminateds, truncateds, infos = self.env.step(active_actions)
-
-        # ВИПРАВЛЕННЯ: Фільтруйте спостереження для завершених агентів
-        filtered_obs = {
-            agent_id: agent_obs
-            for agent_id, agent_obs in obs.items()
-            if not self._terminateds.get(agent_id, False) and not self._truncateds.get(agent_id, False)
-        }
-        
-        self._terminateds.update(terminateds)
-        self._truncateds.update(truncateds)
-
-        # ВИПРАВЛЕННЯ: Оновіть список активних агентів
-        self.agents = [
-            agent_id for agent_id in self.possible_agents 
-            if not self._terminateds.get(agent_id, False) and not self._truncateds.get(agent_id, False)
-        ]
-
-        return filtered_obs, rewards, terminateds, truncateds, infos
-    
-    def render(self):
-        return self.env.render()
-
-    def close(self):
-        return self.env.close()
-    
 def add_marl_args(parser):
-    parser.add_argument("--mode", type=str, default="cooperative", choices=["cooperative", "interactive"], help="Environment mode.")
+    """Adds command-line arguments for stand-alone execution."""
+    parser.add_argument("--mode", type=str, default="interactive", choices=["cooperative", "interactive"], help="Environment mode.")
     parser.add_argument("--n-agents", type=int, default=2, help="Number of agents.")
     parser.add_argument("--body", type=str, default="classic_bipedal", help="Agent body type.")
-    parser.add_argument("--iterations", type=int, default=10, help="Number of training iterations.")
-    parser.add_argument("--num-workers", type=int, default=1, help="Number of parallel workers.")
-    parser.add_argument("--check-env", action="store_true", help="Run environment check only.")
+    parser.add_argument("--iterations", type=int, default=100, help="Number of training iterations.")
+    parser.add_argument("--num-workers", type=int, default=2, help="Number of Ray rollout workers.")
+    parser.add_argument("--num-gpus", type=float, default=0, help="Number of GPUs to use for training.")
+    parser.add_argument("--check-env", action="store_true", help="Run a random environment check.")
     parser.add_argument("--width", type=int, help="Render window width.")
     parser.add_argument("--height", type=int, help="Render window height.")
-    parser.add_argument("--fullscreen", action="store_true", help="Run in fullscreen render mode.")
-    parser.add_argument("--run_id", type=str, default="marl_run1", help="Run identifier.")
+    parser.add_argument("--fullscreen", action="store_true", help="Render in fullscreen.")
+    parser.add_argument("--run_id", type=str, default="marl_run1", help="Identifier for the training run.")
+    parser.add_argument("--use-tune", action="store_true", help="Use Ray Tune for hyperparameter tuning.")
+    parser.add_argument('--horizon', type=int, default=3000, help="Max steps per episode.")
+    
+    parser.add_argument("--shared-policy", action="store_true", help="Use a single shared policy for all agents.")
+    parser.add_argument("--use-cc", action="store_true", help="Use a Centralized Critic.")
     return parser
 
-import gymnasium as gym
+def deep_update(original, new_dict):
+    """Utility function to recursively merge two nested dictionaries."""
+    for key, value in new_dict.items():
+        if key in original and isinstance(original[key], Mapping) and isinstance(value, Mapping):
+            deep_update(original[key], value)
+        else:
+            original[key] = value
+    return original
 
-class AddAgentsAndPossibleAgentsWrapper(gym.Wrapper):
-    def __init__(self, env, n_agents):
-        super().__init__(env)
-        self.agents = [f"agent_{i}" for i in range(n_agents)]
-        self.possible_agents = self.agents[:]
-        self._agent_ids = set(self.agents)
+def _parse_search_space(search_space_config):
+    """Parses a search space configuration from string to Tune sampler objects."""
+    if not search_space_config:
+        return {}
+    TUNE_SAMPLERS = {
+        "grid_search": tune.grid_search,
+        "choice": tune.choice,
+        "uniform": tune.uniform,
+        "loguniform": tune.loguniform,
+    }
+    def recursive_parse(config_dict):
+        parsed_dict = {}
+        for key, value in config_dict.items():
+            if isinstance(value, str):
+                is_sampler = False
+                for sampler_name, sampler_func in TUNE_SAMPLERS.items():
+                    if value.startswith(f"tune.{sampler_name}"):
+                        args_str = value[len(f"tune.{sampler_name}"):]
+                        try:
+                            args_val = eval(args_str)
+                            if isinstance(args_val, tuple):
+                                parsed_dict[key] = sampler_func(*args_val)
+                            else:
+                                parsed_dict[key] = sampler_func(args_val)
+                            is_sampler = True
+                            break
+                        except Exception as e:
+                            print(f"ERROR: Could not parse tune args '{args_str}'. Error: {e}")
+                            sys.exit(1)
+                if not is_sampler:
+                    parsed_dict[key] = value
+            elif isinstance(value, dict):
+                parsed_dict[key] = recursive_parse(value)
+            else:
+                parsed_dict[key] = value
+        return parsed_dict
+    return recursive_parse(search_space_config)
 
 def get_env_creator(mode):
+    """Returns an environment creator function based on the selected mode."""
     if mode == "cooperative":
         base_env_creator_func = lambda config: MultiAgentParkour(config=config)
     elif mode == "interactive":
         base_env_creator_func = lambda config: InteractiveMultiAgentParkour(config=config)
     else:
-        raise ValueError(f"Invalid mode: '{mode}'. Use 'cooperative' or 'interactive'.")
-
+        raise ValueError(f"Invalid mode: '{mode}'. Supported modes are 'cooperative' or 'interactive'.")
+        
     def wrapped_env_creator(config):
         base_env = base_env_creator_func(config)
-
         def clip_multi_agent_obs(obs_dict):
             return {
                 agent_id: np.clip(agent_obs, -10.0, 10.0)
                 for agent_id, agent_obs in obs_dict.items()
             }
-
-        clipped_env = TransformObservation(
-            base_env, clip_multi_agent_obs, base_env.observation_space
-        )
-        
-        final_env = RLLibMultiAgentWrapper(clipped_env)
-        # =======================
-
-        return final_env
-
+        original_obs_space = base_env.observation_space
+        clipped_sub_spaces = {}
+        if isinstance(original_obs_space, gym.spaces.Dict):
+             for agent_id, sub_space in original_obs_space.items():
+                clipped_sub_spaces[agent_id] = gym.spaces.Box(
+                    low=-10.0, high=10.0, shape=sub_space.shape, dtype=sub_space.dtype
+                )
+        clipped_observation_space = gym.spaces.Dict(clipped_sub_spaces)
+        clipped_env = TransformObservation(base_env, clip_multi_agent_obs, clipped_observation_space)
+        return clipped_env
     return wrapped_env_creator
 
 def check_environment_mode(args):
-    print("\n" + "=" * 60)
-    print(f" ENVIRONMENT CHECK MODE ({args.mode.upper()})")
-    print(f"  - Body: {args.body}, Agents: {args.n_agents}")
-    print("=" * 60 + "\n")
-
-    env = None
-    try:
-        env_creator_func = get_env_creator(args.mode)
-        env_config = {"n_agents": args.n_agents, "agent_body_type": args.body, "render_mode": "human"}
-
-        print("1. Initializing environment...")
-        env = env_creator_func(env_config)
-        print("   -> Success.\n")
-
-        print("2. Setting up render window...")
-        setup_render_window_util(env, args)
-
-        print("\n3. Resetting environment...")
-        obs, _ = env.reset()
-        print("   -> Success.\n")
-
-        steps_to_run = 300
-        print(f"4. Running {steps_to_run} random steps...")
-        for step in range(steps_to_run):
-            env.render()
-            viewer = getattr(env, "viewer", None) or getattr(env.envs[0], "viewer", None)
-            if viewer and viewer.window.has_exit:
-                raise KeyboardInterrupt("Window closed by user.")
-
-            random_actions = env.action_space.sample()
-            obs, _, terminated, truncated, _ = env.step(random_actions)
-            time.sleep(1 / 60)
-
-            if terminated["__all__"] or truncated["__all__"]:
-                print(f"   Episode ended early after {step + 1} steps. Resetting...")
-                obs, _ = env.reset()
-
-        print("\n✅ Environment random-step test passed.")
-        print("Keep the render window open. Close it to exit.")
-        while True:
-            env.render()
-            viewer = getattr(env, "viewer", None) or getattr(env.envs[0], "viewer", None)
-            if viewer and viewer.window.has_exit:
-                break
-            time.sleep(1 / 60)
-
-    except (Exception, KeyboardInterrupt) as e:
-        if not isinstance(e, KeyboardInterrupt):
-            print("\n❌ Environment check failed:", e)
-            import traceback
-            traceback.print_exc()
-    finally:
-        if env:
-            env.close()
-            print("Environment closed.")
-
+    pass
 
 def main(args):
-    if args.check_env:
+    """Main training function, receiving its configuration from the args object."""
+    if hasattr(args, 'check_env') and args.check_env:
         check_environment_mode(args)
         return
 
-    ray.init(ignore_reinit_error=True)
+    if not hasattr(args, 'horizon'):
+        args.horizon = 3000
 
     env_name = f"marl-{args.mode}-v0"
     register_env(env_name, get_env_creator(args.mode))
 
-    env_config = {"n_agents": args.n_agents, "agent_body_type": args.body}
-    print(f"Retrieving sample spaces for '{env_name}'...")
-    temp_env = get_env_creator(args.mode)(env_config)
-    obs_space = temp_env.observation_space["agent_0"]
-    act_space = temp_env.action_space["agent_0"]
-    temp_env.close()
-    print("...Spaces retrieved.\n")
+    env_config = {"n_agents": args.n_agents, "agent_body_type": args.body, "horizon": args.horizon}
+    
+    with get_env_creator(args.mode)(env_config) as temp_env:
+        obs_space = temp_env.observation_space["agent_0"]
+        act_space = temp_env.action_space["agent_0"]
+
+    ppo_config_dict = getattr(args, 'ppo_config', {})
+    training_config = ppo_config_dict.get('training', {})
+    model_config = ppo_config_dict.get('model', {})
+    env_runners_config = ppo_config_dict.get('env_runners', {})
 
     config = (
         PPOConfig()
         .environment(env=env_name, env_config=env_config, normalize_actions=True)
-        .env_runners(num_env_runners=args.num_workers, rollout_fragment_length="auto")
+        .env_runners(num_env_runners=args.num_workers, **env_runners_config)
         .framework("torch")
-        .training(
-            lr=1e-5,
-            grad_clip=0.5,
-            grad_clip_by="norm",
-            vf_clip_param=100.0,
-            entropy_coeff=0.01,
-            model={
-                "fcnet_hiddens": [256, 256],
-                "fcnet_activation": "tanh",
-            })
-        .multi_agent(
+        .training(**training_config)
+        .rl_module(model_config=model_config)
+        .resources(num_gpus=args.num_gpus)
+    )
+
+    if hasattr(args, 'shared_policy') and args.shared_policy:
+        print("🚀 Using Parameter Sharing: A single policy for all agents.")
+        config.multi_agent(
+            policies={"shared_policy": PolicySpec(observation_space=obs_space, action_space=act_space)},
+            policy_mapping_fn=lambda agent_id, *a, **kw: "shared_policy",
+        )
+    else:
+        print("🚀 Using Independent Learning: Separate policies for each agent.")
+        config.multi_agent(
             policies={f"agent_{i}": PolicySpec(observation_space=obs_space, action_space=act_space) for i in range(args.n_agents)},
             policy_mapping_fn=lambda agent_id, *a, **kw: agent_id,
         )
-        .resources(num_gpus=0)
-    )
 
-    algo = config.build()
-    print(f"🚀 Training {args.n_agents} agents ({args.body}) for {args.iterations} iterations...\n")
+    if hasattr(args, 'use_cc') and args.use_cc:
+        print("🚀 Activating Centralized Critic.")
+        config.update_from_dict({"use_centralized_value_function": True})
 
-    for i in range(args.iterations):
-        result = algo.train()
-        env_runner_results = result.get("env_runners", {})
+    use_tune = getattr(args, 'use_tune', False)
+    if use_tune:
+        print("🚀 Starting MARL training with Ray Tune...")
+        
+        tune_config = getattr(args, 'tune_config', {})
+        search_space_config = tune_config.get('search_space', {})
+        run_config_dict = tune_config.get('run_config', {})
 
-        episode_reward_mean = env_runner_results.get("episode_return_mean", float("nan"))
+        if 'stop' not in run_config_dict:
+            raise ValueError("When 'use_tune: true', you must define 'stop' criteria inside 'tune_config.run_config' in the YAML file.")
+        stop_criteria = run_config_dict['stop']
+        
+        search_space = _parse_search_space(search_space_config)
+        
+        param_space = config.to_dict()
+        deep_update(param_space, search_space)
+        
+        checkpoint_config_dict = run_config_dict.get('checkpoint_config', {})
+        checkpoint_config_dict.setdefault('num_to_keep', 1)
+        checkpoint_config_dict.setdefault('checkpoint_score_attribute', f"{ENV_RUNNER_RESULTS}/{EPISODE_RETURN_MEAN}")
+        checkpoint_config_dict.setdefault('checkpoint_score_order', 'max')
+        checkpoint_config = air.CheckpointConfig(**checkpoint_config_dict)
 
-        per_policy_rewards = env_runner_results.get("module_episode_returns_mean", {})
+        storage_path = os.path.abspath(os.path.join("output", "marl"))
+        run_name = run_config_dict.get('name', args.run_id)
+        print(f"Checkpoints will be saved to: {os.path.join(storage_path, run_name)}")
 
-        learner_results = result.get("learners", {})
-        agent_0_stats = learner_results.get("agent_0", {})
-        total_loss_agent_0 = agent_0_stats.get("total_loss", float("nan"))
-        agent_1_stats = learner_results.get("agent_1", {})
-        total_loss_agent_1 = agent_1_stats.get("total_loss", float("nan"))
-
-        print(
-            f"Iteration {i + 1}/{args.iterations}: "
-            f"Episode Reward Mean: {episode_reward_mean:.2f}, "
-            f"Per-Policy Rewards: {per_policy_rewards}, "
-            f"Loss(agent_0): {total_loss_agent_0:.4f}, "
-            f"Loss(agent_1): {total_loss_agent_1:.4f}"
+        run_config = air.RunConfig(
+            name=run_name,
+            stop=stop_criteria,
+            verbose=run_config_dict.get('verbose', 2),
+            checkpoint_config=checkpoint_config,
+            storage_path=storage_path,
         )
 
-    checkpoint_dir = algo.save().checkpoint.path
-    print(f"\n✅ Checkpoint saved at: {checkpoint_dir}")
+        def short_trial_name_creator(trial):
+            return trial.trial_id
 
-    ray.shutdown()
-    return checkpoint_dir
+        tuner = tune.Tuner(
+            "PPO", 
+            param_space=param_space, 
+            run_config=run_config,
+            tune_config=tune.TuneConfig(
+                trial_dirname_creator=short_trial_name_creator
+            )
+        )
 
+        results = tuner.fit()
+
+        best_result = results.get_best_result(metric=f"{ENV_RUNNER_RESULTS}/{EPISODE_RETURN_MEAN}", mode="max")
+        best_checkpoint_path = best_result.checkpoint.path if best_result and best_result.checkpoint else None
+        
+        print("\n" + "="*60)
+        print("🎉 Ray Tune finished! 🎉")
+        if best_result:
+            print(f"Best trial final reward: {best_result.metrics.get(ENV_RUNNER_RESULTS, {}).get(EPISODE_RETURN_MEAN, 'N/A')}")
+            print(f"Best trial config: {best_result.config}")
+            print(f"Best checkpoint saved at: {best_checkpoint_path}")
+        else:
+            print("No trials completed successfully.")
+        print("="*60)
+        return best_checkpoint_path
+
+    else:
+        print(f"🚀 Starting a single MARL training run for {args.iterations} iterations...")
+        algo = config.build()
+        
+        output_dir = os.path.abspath(os.path.join("output", "marl", args.run_id))
+        os.makedirs(output_dir, exist_ok=True)
+        print(f"Checkpoints will be saved to: {output_dir}")
+
+        best_reward = -float('inf')
+        checkpoint_path_to_return = None
+
+        for i in range(args.iterations):
+            result = algo.train()
+            env_runner_results = result.get(ENV_RUNNER_RESULTS, {})
+            learner_results = result.get(LEARNER_RESULTS, {})
+            episode_reward_mean = env_runner_results.get(EPISODE_RETURN_MEAN, float("nan"))
+            
+            if episode_reward_mean > best_reward:
+                best_reward = episode_reward_mean
+                checkpoint_result = algo.save(checkpoint_dir=output_dir)
+                checkpoint_path_to_return = checkpoint_result.checkpoint.path
+                print(f"\n✨ New best average reward: {best_reward:.2f}. Checkpoint saved at: {checkpoint_path_to_return}")
+
+            per_policy_rewards = env_runner_results.get("module_episode_returns_mean", {})
+            total_loss_per_module = {
+                module_id: stats.get("total_loss", float("nan"))
+                for module_id, stats in learner_results.items()
+                if module_id != ALL_MODULES
+            }
+            print(
+                f"Iter {i + 1}/{args.iterations}: "
+                f"Mean Episode Reward: {episode_reward_mean:.2f}, "
+                f"Per-Policy Rewards: {per_policy_rewards}, "
+                f"Per-Module Total Loss: {total_loss_per_module}"
+            )
+        
+        print(f"\n✅ Training complete. Best checkpoint saved at: {checkpoint_path_to_return}")
+        return checkpoint_path_to_return
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser()
-    parser = add_marl_args(parser)
+    parser = argparse.ArgumentParser(description="Train MARL agents with PPO and optional Ray Tune.")
+    add_marl_args(parser)
     args = parser.parse_args()
-    main(args)
+    
+    if not ray.is_initialized():
+        ray.init(ignore_reinit_error=True)
+    try:
+        main(args)
+    finally:
+        if ray.is_initialized():
+            ray.shutdown()

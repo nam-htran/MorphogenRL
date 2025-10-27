@@ -1,30 +1,75 @@
 WATCH:
-  num_episodes: 3
-  fullscreen: false
+  enabled: false 
+  fast_forward: true
+  auto_skip_stuck: true
 
 PPO:
-  enabled: true
-  run_id: "ppo_initial_run"
-  body: "classic_bipedal"
+  enabled: true 
+  run_id: "ppo_final_stable_run"
   env: "parkour"
-  total_timesteps: 300000 
-  save_freq_ratio: 0.2
+  body: "classic_bipedal"
+  
+  total_timesteps: 10000000
+  save_freq: 250000
+  n_envs: 16
+  horizon: 3000
+
+  ppo_config:
+    gamma: 0.99
+    n_steps: 2048
+    ent_coef: 0.01 
+    learning_rate: 0.0003
+    vf_coef: 0.5
+    max_grad_norm: 0.5
 
 ACL:
-  enabled: true
-  run_id: "acl_initial_run"
-  body: "climbing_profile_chimpanzee"
+  enabled: false
+  run_id: "acl_final_run"
   env: "parkour"
-  total_stages: 50 
-  student_steps_per_stage: 16384
-  eval_episodes: 5
-  mastery_threshold: 50.0 
-  difficulty_increment: 0.02
+  body: "climbing_profile_chimpanzee"
+  total_stages: 1000
+  student_steps_per_stage: 32768 
+  eval_episodes: 20
+  mastery_threshold: 200.0
+  difficulty_increment: 0.005
+  horizon: 4000
+
 
 MARL:
-  enabled: true
-  run_id: "marl_initial_run"
+  enabled: true 
+  run_id: "marl_final_tuned_run"
   mode: "interactive"
   n_agents: 2
   body: "classic_bipedal"
-  iterations: 50
+  num_workers: 8
+  num_gpus: 2
+  horizon: 3000
+
+  shared_policy: true
+  use_cc: true
+
+  use_tune: true 
+  
+  tune_config:
+    run_config:
+      name: "marl_final_tuning"
+      stop:
+        env_runners/episode_reward_mean: 280
+        training_iteration: 1000
+      checkpoint_config:
+        num_to_keep: 3
+        checkpoint_score_attribute: "env_runners/episode_reward_mean" 
+        checkpoint_score_order: "max"
+
+    search_space:
+      training:
+        lr: "tune.grid_search([0.0003, 0.0001, 0.00005])"
+        gamma: 0.99
+        lambda_: "tune.uniform(0.9, 1.0)"
+        clip_param: "tune.choice([0.1, 0.2])"
+        entropy_coeff: "tune.choice([0.0, 0.005, 0.01])"
+      
+      rl_module:
+        model_config:
+          fcnet_hiddens: "tune.choice([[512, 512], [256, 256]])"
+          fcnet_activation: "tanh"

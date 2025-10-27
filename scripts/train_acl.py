@@ -1,9 +1,5 @@
 #!/usr/bin/env python3
-"""
-train_acl.py
-Train an agent using Automatic Curriculum Learning (ACL)
-in the custom Parkour environment.
-"""
+# scripts/train_acl.py
 import os
 import sys
 import time
@@ -42,6 +38,7 @@ def add_acl_args(parser):
     group.add_argument("--mastery_threshold", type=float, default=150.0, help="Reward threshold to increase difficulty.")
     group.add_argument("--difficulty_increment", type=float, default=0.01, help="Difficulty increase step.")
     group.add_argument("--render", action="store_true", help="Enable rendering during training and evaluation.")
+    parser.add_argument('--horizon', type=int, default=3000, help="Max steps per episode.")
     return parser
 
 
@@ -56,11 +53,10 @@ def sample_task_params(difficulty_ratio):
 def evaluate_student(student_model, env_id, body_type, difficulty_ratio, num_episodes, args, render_mode=None):
     total_rewards = 0.0
     eval_env = None
-    MAX_STEPS_PER_EVAL_EPISODE = 1600
-
+    
     try:
         initial_task = sample_task_params(difficulty_ratio)
-        eval_env = build_and_setup_env(env_id, body_type, initial_task, render_mode=render_mode)
+        eval_env = build_and_setup_env(env_id, body_type, initial_task, render_mode=render_mode, args=args)
 
         if render_mode == "human":
             setup_render_window(eval_env, args)
@@ -75,7 +71,6 @@ def evaluate_student(student_model, env_id, body_type, difficulty_ratio, num_epi
             obs, _ = eval_env.reset()
             terminated, truncated = False, False
             episode_reward = 0.0
-            step_count = 0
 
             while not (terminated or truncated):
                 if render_mode == "human":
@@ -87,11 +82,6 @@ def evaluate_student(student_model, env_id, body_type, difficulty_ratio, num_epi
                 action, _ = student_model.predict(obs, deterministic=True)
                 obs, reward, terminated, truncated, _ = eval_env.step(action)
                 episode_reward += reward
-
-                step_count += 1
-                if step_count >= MAX_STEPS_PER_EVAL_EPISODE:
-                    print(f"    Episode stopped after {MAX_STEPS_PER_EVAL_EPISODE} steps (timeout).")
-                    truncated = True
 
             total_rewards += episode_reward
 
@@ -123,8 +113,11 @@ def main(args):
 
     print("--- Initializing Student (PPO) ---")
     initial_params = sample_task_params(0.0)
-    initial_env = build_and_setup_env(args.env, args.body, initial_params)
-    student = PPO("MlpPolicy", initial_env, verbose=0, tensorboard_log=os.path.join(log_dir, "student"))
+    initial_env = build_and_setup_env(args.env, args.body, initial_params, args=args)
+
+    ppo_kwargs = getattr(args, 'ppo_config', {})
+    print("Using PPO hyperparameters for student:", ppo_kwargs)
+    student = PPO("MlpPolicy", initial_env, verbose=0, tensorboard_log=os.path.join(log_dir, "student"), **ppo_kwargs)
     initial_env.close()
 
     difficulty_ratio = 0.0
@@ -138,7 +131,7 @@ def main(args):
             print(f"\n--- Stage {stage}/{args.total_stages} | Difficulty: {difficulty_ratio:.3f} ---")
             print(f"Task parameters: {task_params}")
 
-            env_fn = lambda: build_and_setup_env(args.env, args.body, task_params, render_mode=render_mode)
+            env_fn = lambda: build_and_setup_env(args.env, args.body, task_params, render_mode=render_mode, args=args)
             vec_env = make_vec_env(env_fn, n_envs=1)
 
             if render_mode == "human":
