@@ -29,8 +29,7 @@ The core of this project is the interaction between agents with different bodies
 The project is orchestrated by the main entry point, `run.py`, which dispatches tasks based on user commands. These commands call various scripts in the `scripts/` directory to handle everything from training and testing to visualization. The training scripts interface with the `TeachMyAgent` environments, which procedurally generate terrain and instantiate the specified agent bodies.
 
 Below is a diagram illustrating the project's workflow.
-
-<img width="1511" height="808" alt="{FF9A13F5-9E06-4AFB-AD51-529E7E461EBB}" src="https://github.com/user-attachments/assets/3c571975-32ac-4022-9712-918a16f57731" />
+<img width="3212" height="1608" alt="Mermaid Chart - Create complex, visual diagrams with text -2025-10-27-155746" src="https://github.com/user-attachments/assets/a30ef2e9-ac30-418c-aa3c-609d3ab0a622" />
 
 ## Setup and Installation
 
