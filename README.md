@@ -30,7 +30,7 @@ The project is orchestrated by the main entry point, `run.py`, which dispatches 
 
 Below is a diagram illustrating the project's workflow.
 
-<img src="https://github.com/user-attachments/assets/54a31301-f566-4b93-8f61-1ab44e444fd0" alt="Workflow Diagram" width="800"/>
+<img width="1511" height="808" alt="{FF9A13F5-9E06-4AFB-AD51-529E7E461EBB}" src="https://github.com/user-attachments/assets/3c571975-32ac-4022-9712-918a16f57731" />
 
 ## Setup and Installation
 
