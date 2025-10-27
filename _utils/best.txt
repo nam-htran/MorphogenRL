@@ -8,10 +8,8 @@ import yaml
 from types import SimpleNamespace
 import ray
 
-# Add the project root to the Python path to allow for absolute imports
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-# Import all necessary script modules
 from scripts import demo as demo_script
 from scripts import train_ppo, train_acl, train_marl, watch
 from scripts import test_suite as test_suite_script
@@ -33,17 +31,7 @@ def print_header(title):
     print("\n\n" + "#"*width + f"\n##{title:^76}##\n" + "#"*width)
 
 def run_task(func, args_namespace, task_name):
-    """
-    Executes a given function (task) with specified arguments and handles exceptions.
-    
-    Args:
-        func: The function to execute.
-        args_namespace: A namespace object containing arguments for the function.
-        task_name: The name of the task for logging purposes.
-        
-    Returns:
-        The result of the function execution.
-    """
+    """Executes a given function (task) with specified arguments and handles exceptions."""
     print_header(f"START TASK: {task_name.upper()}")
     try:
         result = func(args_namespace) if args_namespace is not None else func()
@@ -56,20 +44,15 @@ def run_task(func, args_namespace, task_name):
         if e.__class__.__name__ == 'UserInterrupt':
             print(f"\nINFO: Task '{task_name}' stopped by user.")
             sys.exit(0)
-        
         print(f"\nERROR: Task '{task_name}' failed.")
         import traceback
         traceback.print_exc()
         sys.exit(1)
 
 def run_pipeline(args):
-    """
-    Runs the main training and evaluation pipeline based on a configuration file.
-    
-    Args:
-        args: Command-line arguments from the 'pipeline' subcommand.
-    """
+    """Runs the main training and evaluation pipeline from a configuration file."""
     config = load_config(args.config)
+    watch_config = config.get('WATCH', {})
     
     for stage_name in ['PPO', 'ACL', 'MARL']:
         stage_config = config.get(stage_name, {})
@@ -77,16 +60,14 @@ def run_pipeline(args):
             continue
         
         cfg = stage_config
-        
-
         stage_args = SimpleNamespace(**cfg)
 
         if not hasattr(stage_args, 'render'): stage_args.render = False
         if not hasattr(stage_args, 'width'): stage_args.width = None
         if not hasattr(stage_args, 'height'): stage_args.height = None
         if not hasattr(stage_args, 'fullscreen'): stage_args.fullscreen = False
-        
-        # Đặt giá trị mặc định cho các tham số môi trường cụ thể
+        if not hasattr(stage_args, 'horizon'): stage_args.horizon = 3000
+
         if not hasattr(stage_args, 'roughness'): stage_args.roughness = None
         if not hasattr(stage_args, 'stump_height'): stage_args.stump_height = None
         if not hasattr(stage_args, 'stump_width'): stage_args.stump_width = None
@@ -97,82 +78,52 @@ def run_pipeline(args):
         if not hasattr(stage_args, 'creepers_height'): stage_args.creepers_height = None
         if not hasattr(stage_args, 'creepers_spacing'): stage_args.creepers_spacing = None
 
+        checkpoint_path = None
         if stage_name == 'PPO':
             checkpoint_path = run_task(train_ppo.main, stage_args, "PPO Training")
-            if args.watch and checkpoint_path:
-                watch_args = SimpleNamespace(
-                    model_path=checkpoint_path,
-                    framework='sb3', num_episodes=5,
-                    env=stage_args.env, body=stage_args.body,
-                    width=args.width, height=args.height, fullscreen=args.fullscreen,
-                    **vars(stage_args)
-                )
-                run_task(watch.main, watch_args, "Watch PPO")
-
         elif stage_name == 'ACL':
             checkpoint_path = run_task(train_acl.main, stage_args, "ACL Training")
-            if args.watch and checkpoint_path:
-                watch_args = SimpleNamespace(
-                    model_path=checkpoint_path,
-                    framework='sb3', num_episodes=5,
-                    env=stage_args.env, body=stage_args.body,
-                    width=args.width, height=args.height, fullscreen=args.fullscreen,
-                     **vars(stage_args)
-                )
-                run_task(watch.main, watch_args, "Watch ACL")
-
         elif stage_name == 'MARL':
             if not hasattr(stage_args, 'check_env'): stage_args.check_env = False
             if not hasattr(stage_args, 'shared_policy'): stage_args.shared_policy = False
             if not hasattr(stage_args, 'use_cc'): stage_args.use_cc = False
-            
             checkpoint_path = run_task(train_marl.main, stage_args, f"MARL Training ({stage_args.mode})")
-            
-            if args.watch and checkpoint_path:
+
+        if watch_config.get('enabled', False) and checkpoint_path:
+            if stage_name == 'MARL':
                 print_header("WATCH MARL (INFO)")
                 print("RLlib MARL checkpoints are complex and not directly supported by 'watch.py'.")
-                print("To watch a trained MARL agent, you would need to manually load the checkpoint")
-                print("using RLlib's API and run an inference loop.")
                 print(f"Best MARL checkpoint from tuning saved at: {checkpoint_path}")
+            else:
+                watch_args = SimpleNamespace(
+                    model_path=checkpoint_path,
+                    framework='sb3', num_episodes=5,
+                    env=stage_args.env, body=stage_args.body,
+                    width=args.width, height=args.height, fullscreen=args.fullscreen,
+                    **watch_config, **vars(stage_args)
+                )
+                run_task(watch.main, watch_args, f"Watch {stage_name}")
 
     print_header("PIPELINE COMPLETE")
 
 if __name__ == '__main__':
-    # === IMPORTANT FIX FOR RAY ON WINDOWS ===
-    temp_dir = "D:/ray_tmp" 
+    temp_dir = "/tmp/ray_results"
     print(f"Initializing Ray with temporary directory: {temp_dir}")
     os.makedirs(temp_dir, exist_ok=True)
     
-    ray.init(
-        ignore_reinit_error=True, 
-        _temp_dir=temp_dir,
-        object_store_memory=10**9 # 1GB
-    )
-    # =======================================
+    ray.init(ignore_reinit_error=True, _temp_dir=temp_dir, object_store_memory=10**9)
     
     try:
         parser = argparse.ArgumentParser(description="Main entry point for TeachMyAgent.", formatter_class=argparse.RawTextHelpFormatter)
         subparsers = parser.add_subparsers(dest='command', required=True, help="Available commands")
 
-        # --- Pipeline Command ---
         pipeline_parser = subparsers.add_parser('pipeline', help="Run the full training pipeline from a YAML config file.")
         pipeline_parser.add_argument('--config', type=str, default='configs/main_pipeline.yaml', help="Path to the main pipeline configuration file.")
-        pipeline_parser.add_argument('--watch', action='store_true', help="Watch agents after training stages.")
-        # Thêm các đối số chung để có thể ghi đè từ CLI nếu cần
         pipeline_parser.add_argument('--width', type=int, help="Override window width for watching.")
         pipeline_parser.add_argument('--height', type=int, help="Override window height for watching.")
         pipeline_parser.add_argument('--fullscreen', action='store_true', help="Override fullscreen for watching.")
         pipeline_parser.set_defaults(func=run_pipeline)
 
-        # --- Test Suite Commands ---
-        test_parser = subparsers.add_parser('test_suite', help="Run the quick, integrated project test suite.")
-        test_parser.set_defaults(func=lambda args=None: run_task(test_suite_script.main, None, "Project Test Suite"))
-
-        check_parser = subparsers.add_parser('check_envs', help="Run comprehensive checks on all environments and bodies.")
-        check_all_script.add_check_all_args(check_parser)
-        check_parser.set_defaults(func=lambda args: run_task(check_all_script.main, args, "Environment Check"))
-
-        # --- Training Commands ---
         train_parser = subparsers.add_parser('train', help="Train a specific algorithm.")
         train_subparsers = train_parser.add_subparsers(dest='algorithm', required=True)
         
@@ -188,7 +139,6 @@ if __name__ == '__main__':
         train_marl.add_marl_args(marl_parser)
         marl_parser.set_defaults(func=lambda args: run_task(train_marl.main, args, "MARL Training"))
 
-        # --- Utility Commands ---
         watch_parser = subparsers.add_parser('watch', help="Watch a trained single-agent model.")
         watch.add_watch_args(watch_parser)
         watch_parser.set_defaults(func=lambda args: run_task(watch.main, args, "Watch Model"))
@@ -201,10 +151,16 @@ if __name__ == '__main__':
         record_script.add_record_args(record_parser)
         record_parser.set_defaults(func=lambda args: run_task(record_script.main, args, "Record Video"))
 
+        check_parser = subparsers.add_parser('check_envs', help="Run comprehensive checks on all environments and bodies.")
+        check_all_script.add_check_all_args(check_parser)
+        check_parser.set_defaults(func=lambda args: run_task(check_all_script.main, args, "Environment Check"))
+
+        test_parser = subparsers.add_parser('test_suite', help="Run the quick, integrated project test suite.")
+        test_parser.set_defaults(func=lambda args=None: run_task(test_suite_script.main, None, "Project Test Suite"))
+
         convert_parser = subparsers.add_parser('convert_weights', help="Convert legacy TF1 weights to PyTorch.")
         convert_parser.set_defaults(func=lambda args=None: run_task(convert_weight.convert_tf1_to_pytorch, None, "Convert Weights"))
 
-        # Parse arguments and execute the corresponding function
         args = parser.parse_args()
         if hasattr(args, 'func'):
             args.func(args)
@@ -215,6 +171,83 @@ if __name__ == '__main__':
         if ray.is_initialized():
             ray.shutdown()
             print("Ray has been shut down.")
+
+===== .\configs\main_pipeline.yaml =====
+WATCH:
+  enabled: false 
+  fast_forward: true
+  auto_skip_stuck: true
+
+PPO:
+  enabled: true 
+  run_id: "ppo_final_stable_run"
+  env: "parkour"
+  body: "classic_bipedal"
+  
+  total_timesteps: 10000000
+  save_freq: 250000
+  n_envs: 16
+  horizon: 3000
+
+  ppo_config:
+    gamma: 0.99
+    n_steps: 2048
+    ent_coef: 0.01 
+    learning_rate: 0.0003
+    vf_coef: 0.5
+    max_grad_norm: 0.5
+
+ACL:
+  enabled: false
+  run_id: "acl_final_run"
+  env: "parkour"
+  body: "climbing_profile_chimpanzee"
+  total_stages: 1000
+  student_steps_per_stage: 32768 
+  eval_episodes: 20
+  mastery_threshold: 200.0
+  difficulty_increment: 0.005
+  horizon: 4000
+
+
+MARL:
+  enabled: true 
+  run_id: "marl_final_tuned_run"
+  mode: "interactive"
+  n_agents: 2
+  body: "classic_bipedal"
+  num_workers: 8
+  num_gpus: 2
+  horizon: 3000
+
+  shared_policy: true
+  use_cc: true
+
+  use_tune: true 
+  
+  tune_config:
+    run_config:
+      name: "marl_final_tuning"
+      stop:
+        env_runners/episode_reward_mean: 280
+        training_iteration: 1000
+      checkpoint_config:
+        num_to_keep: 3
+        checkpoint_score_attribute: "env_runners/episode_reward_mean" 
+        checkpoint_score_order: "max"
+
+    search_space:
+      training:
+        lr: "tune.grid_search([0.0003, 0.0001, 0.00005])"
+        gamma: 0.99
+        lambda_: "tune.uniform(0.9, 1.0)"
+        clip_param: "tune.choice([0.1, 0.2])"
+        entropy_coeff: "tune.choice([0.0, 0.005, 0.01])"
+      
+      rl_module:
+        model_config:
+          fcnet_hiddens: "tune.choice([[512, 512], [256, 256]])"
+          fcnet_activation: "tanh"
 
 ===== .\output\marl\marl_shared_cc\rllib_checkpoint.json =====
 {"class_and_ctor_args_file": "class_and_ctor_args.pkl", "state_file": "algorithm_state", "ray_version": "2.50.1", "ray_commit": "7cf6817996f5304b5c808453a997fc1570dcde25", "checkpoint_version": "2.1"}
@@ -364,6 +397,74 @@ if __name__ == '__main__':
 ===== .\preprocessing\__init__.py =====
 
 
+===== .\scripts\calculate_map_length.py =====
+# scripts/calculate_map_length.py
+import argparse
+import sys
+import numpy as np
+
+def print_header(title):
+    """Prints a standardized header."""
+    width = 80
+    print("\n" + "#"*width + f"\n##{title:^76}##\n" + "#"*width)
+
+def add_calculate_length_args(parser):
+    """Adds CLI arguments for the map length calculation."""
+    parser.add_argument('--env', type=str, default='parkour', choices=['parkour', 'stump'],
+                        help="Select the environment to calculate the length for.")
+    return parser
+
+def main(args):
+    """
+    Calculates the map length based on predefined constants in the environment code.
+    This provides an instant estimate without running a simulation.
+    """
+    print_header(f"CALCULATING MAP LENGTH FOR '{args.env.upper()}'")
+
+    # Import constants directly from the environment files
+    if args.env == 'parkour':
+        from TeachMyAgent.environments.envs.parametric_continuous_parkour import (
+            SCALE, TERRAIN_STEP, TERRAIN_LENGTH, TERRAIN_END, INITIAL_TERRAIN_STARTPAD
+        )
+    elif args.env == 'stump':
+        from TeachMyAgent.environments.envs.parametric_continuous_stump_tracks import (
+            SCALE, TERRAIN_STEP, TERRAIN_LENGTH, TERRAIN_END, INITIAL_TERRAIN_STARTPAD
+        )
+    else:
+        print(f"ERROR: Environment '{args.env}' not supported by this script.")
+        sys.exit(1)
+
+    # The condition to finish an episode is based on the agent's x-position
+    finish_line_x = (TERRAIN_LENGTH + INITIAL_TERRAIN_STARTPAD - TERRAIN_END) * TERRAIN_STEP
+
+    # Estimate required steps. This is a rough heuristic.
+    # A bipedal walker's speed varies greatly. We can assume an average of ~0.2 units of distance per step.
+    # So, steps = distance / speed_per_step
+    estimated_steps = int(finish_line_x / 0.2)
+
+    print("Environment Constants:")
+    print(f"  - TERRAIN_LENGTH: {TERRAIN_LENGTH} (steps)")
+    print(f"  - TERRAIN_STEP: {TERRAIN_STEP:.4f} (meters per step)")
+    print(f"  - TERRAIN_STARTPAD: {INITIAL_TERRAIN_STARTPAD} (steps)")
+    print(f"  - TERRAIN_END: {TERRAIN_END} (steps before actual end)")
+    print("-" * 80)
+    print(f"CALCULATION:")
+    print(f"  - Finish Line X-Coordinate = ({TERRAIN_LENGTH} + {INITIAL_TERRAIN_STARTPAD} - {TERRAIN_END}) * {TERRAIN_STEP:.4f}")
+    print(f"  - Finish Line at approx. x = {finish_line_x:.2f} meters")
+    print("-" * 80)
+    print("RECOMMENDATION:")
+    print(f"An agent needs to travel approximately {finish_line_x:.2f} meters to finish the map.")
+    print(f"A rough estimate of steps required would be around: {estimated_steps} steps.")
+    print("\n=> Recommended 'horizon' value in your YAML file: {}".format(int(estimated_steps * 1.2)))
+    print("(This includes a 20% buffer. Use 'check_length' command for a more accurate simulation-based value).")
+
+
+if __name__ == '__main__':
+    parser = argparse.ArgumentParser(description="Instantly calculate the length of a procedurally generated map.")
+    parser = add_calculate_length_args(parser)
+    args = parser.parse_args()
+    main(args)
+
 ===== .\scripts\check_all.py =====
 # scripts/check_all.py
 import argparse
@@ -469,6 +570,178 @@ if __name__ == '__main__':
     args = parser.parse_args()
     main(args)
 
+
+===== .\scripts\check_map_length.py =====
+# scripts/check_map_length.py
+import argparse
+import os
+import sys
+import time
+import numpy as np
+from types import SimpleNamespace
+
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+from run import load_config
+from utils.env_utils import build_and_setup_env, collect_env_params
+from stable_baselines3 import PPO
+
+def print_header(title):
+    """Prints a standardized header."""
+    width = 80
+    print("\n" + "#"*width + f"\n##{title:^76}##\n" + "#"*width)
+
+def add_check_length_args(parser):
+    """Adds CLI arguments for the map length check."""
+    parser.add_argument('--config', type=str, default='configs/main_pipeline.yaml', help="Path to the main pipeline configuration file.")
+    parser.add_argument('--stage', type=str, required=True, choices=['PPO', 'ACL', 'MARL'], help="Which stage configuration to use for the test (e.g., PPO).")
+    parser.add_argument('--model_path', type=str, default=None, help="(Optional) Path to a trained SB3 model (.zip) to run instead of the heuristic.")
+    parser.add_argument('--timeout', type=int, default=10000, help="Maximum number of steps for this check before stopping.")
+    parser.add_argument('--no-render', action='store_true', help="Run without rendering the environment.")
+    parser.add_argument('--fast', action='store_true', help="Run rendering as fast as possible without delay.")
+    return parser
+
+def main(args):
+    """
+    Runs an intelligent exploratory agent to estimate the number of steps 
+    required to finish a map based on a pipeline configuration.
+    """
+    print_header(f"CHECKING MAP LENGTH FOR STAGE: {args.stage}")
+
+    # --- Configuration Loading ---
+    config = load_config(args.config)
+    stage_config = config.get(args.stage)
+
+    if not stage_config:
+        print(f"ERROR: Stage '{args.stage}' not found in '{args.config}'")
+        sys.exit(1)
+        
+    stage_args = SimpleNamespace(**stage_config)
+    
+    stage_args.horizon = args.timeout 
+    stage_args.render = not args.no_render
+    stage_args.width = 1280
+    stage_args.height = 720
+    stage_args.fullscreen = False
+
+    print("Building environment with parameters from stage '{}'".format(args.stage))
+    user_params = collect_env_params(stage_args.env, stage_args)
+    env = build_and_setup_env(stage_args.env, stage_args.body, user_params, 
+                              render_mode="human" if stage_args.render else None, 
+                              args=stage_args)
+
+    # --- Agent Setup ---
+    model = None
+    if args.model_path:
+        if os.path.exists(args.model_path):
+            print(f"\nLoading model from: {args.model_path}")
+            model = PPO.load(args.model_path)
+        else:
+            print(f"WARNING: Model not found at '{args.model_path}'. Using smart heuristic agent.")
+
+    if model is None:
+        print("\nUsing a smart heuristic agent to explore the map.")
+        action_size = env.action_space.shape[0]
+        
+        # Define multiple strategies to move forward for classic_bipedal
+        CANDIDATE_ACTIONS = [
+            np.array([0.2, 0.1, -0.2, 0.1]),   # Strategy 1: Standard walk
+            np.array([0.3, 0.0, -0.1, 0.0]),   # Strategy 2: Leaning forward
+            np.array([-0.1, 0.3, 0.1, 0.3]),  # Strategy 3: High knee walk
+            lambda: env.action_space.sample() # Strategy 4: Random action to get unstuck
+        ]
+        if action_size < 4: # Fallback for other bodies
+            CANDIDATE_ACTIONS = [lambda: env.action_space.sample()]
+
+    # --- Simulation Loop ---
+    obs, info = env.reset()
+    
+    step = 0
+    total_reward = 0
+    done = False
+    
+    # Variables for smart heuristic
+    current_action_index = 0
+    last_check_step = 0
+    last_check_pos_x = 0
+    max_x_pos = -float('inf')
+    steps_at_max_x = 0
+    
+    # Constants for stuck detection
+    STUCK_CHECK_INTERVAL = 150
+    STUCK_PROGRESS_THRESHOLD = 0.1 # meters
+
+    print("\nStarting simulation... Press Ctrl+C to stop.")
+    try:
+        while not done:
+            if stage_args.render:
+                env.render()
+                if not args.fast:
+                    time.sleep(1./60.)
+
+            # --- Action Selection ---
+            if model:
+                act, _ = model.predict(obs, deterministic=True)
+            else:
+                # Use the smart heuristic agent
+                action_strategy = CANDIDATE_ACTIONS[current_action_index]
+                act = action_strategy() if callable(action_strategy) else action_strategy
+
+            # --- Environment Step ---
+            obs, reward, terminated, truncated, info = env.step(act)
+            done = terminated or truncated
+            total_reward += reward
+            step += 1
+            
+            # --- Progress Tracking for Heuristic Agent ---
+            current_pos_x = env.unwrapped.agent_body.reference_head_object.position.x
+            if current_pos_x > max_x_pos:
+                max_x_pos = current_pos_x
+                steps_at_max_x = step
+
+            if not model and (step - last_check_step > STUCK_CHECK_INTERVAL):
+                progress = current_pos_x - last_check_pos_x
+                if progress < STUCK_PROGRESS_THRESHOLD:
+                    print(f"  -> Agent stuck at step {step} (progress: {progress:.2f}m). Changing strategy...")
+                    current_action_index = (current_action_index + 1) % len(CANDIDATE_ACTIONS)
+                
+                last_check_step = step
+                last_check_pos_x = current_pos_x
+
+            if step >= args.timeout:
+                print("TIMEOUT: Reached maximum steps defined for the check.")
+                break
+
+    except KeyboardInterrupt:
+        print("\nSimulation stopped by user.")
+    finally:
+        env.close()
+
+    # --- Final Report ---
+    print_header("CHECK COMPLETE")
+    print(f"Total Simulation Steps: {step}")
+    print(f"Total Reward: {total_reward:.2f}")
+
+    print("\nPerformance Metrics:")
+    print(f"  - Maximum X-Position Reached: {max_x_pos:.2f} meters")
+    print(f"  - Steps to Reach Max Position: {steps_at_max_x}")
+    
+    if truncated and not terminated:
+        print("\nResult: Episode was TRUNCATED (hit the timeout). The map is likely longer.")
+    elif terminated:
+        print("\nResult: Episode was TERMINATED (agent fell or reached the goal).")
+    else:
+        print("\nResult: Simulation stopped manually.")
+
+    print("\nRECOMMENDATION:")
+    print(f"Based on this run, a good starting 'horizon' value is around {int(steps_at_max_x * 1.2)}.")
+    print("(This is based on steps to reach the furthest point + 20% buffer).")
+
+if __name__ == '__main__':
+    parser = argparse.ArgumentParser(description="Check the approximate number of steps to complete a map.")
+    parser = add_check_length_args(parser)
+    args = parser.parse_args()
+    main(args)
 
 ===== .\scripts\demo.py =====
 # scripts/demo.py
@@ -864,11 +1137,7 @@ if __name__ == '__main__':
 
 ===== .\scripts\train_acl.py =====
 #!/usr/bin/env python3
-"""
-train_acl.py
-Train an agent using Automatic Curriculum Learning (ACL)
-in the custom Parkour environment.
-"""
+# scripts/train_acl.py
 import os
 import sys
 import time
@@ -907,6 +1176,7 @@ def add_acl_args(parser):
     group.add_argument("--mastery_threshold", type=float, default=150.0, help="Reward threshold to increase difficulty.")
     group.add_argument("--difficulty_increment", type=float, default=0.01, help="Difficulty increase step.")
     group.add_argument("--render", action="store_true", help="Enable rendering during training and evaluation.")
+    parser.add_argument('--horizon', type=int, default=3000, help="Max steps per episode.")
     return parser
 
 
@@ -921,11 +1191,10 @@ def sample_task_params(difficulty_ratio):
 def evaluate_student(student_model, env_id, body_type, difficulty_ratio, num_episodes, args, render_mode=None):
     total_rewards = 0.0
     eval_env = None
-    MAX_STEPS_PER_EVAL_EPISODE = 1600
-
+    
     try:
         initial_task = sample_task_params(difficulty_ratio)
-        eval_env = build_and_setup_env(env_id, body_type, initial_task, render_mode=render_mode)
+        eval_env = build_and_setup_env(env_id, body_type, initial_task, render_mode=render_mode, args=args)
 
         if render_mode == "human":
             setup_render_window(eval_env, args)
@@ -940,7 +1209,6 @@ def evaluate_student(student_model, env_id, body_type, difficulty_ratio, num_epi
             obs, _ = eval_env.reset()
             terminated, truncated = False, False
             episode_reward = 0.0
-            step_count = 0
 
             while not (terminated or truncated):
                 if render_mode == "human":
@@ -952,11 +1220,6 @@ def evaluate_student(student_model, env_id, body_type, difficulty_ratio, num_epi
                 action, _ = student_model.predict(obs, deterministic=True)
                 obs, reward, terminated, truncated, _ = eval_env.step(action)
                 episode_reward += reward
-
-                step_count += 1
-                if step_count >= MAX_STEPS_PER_EVAL_EPISODE:
-                    print(f"    Episode stopped after {MAX_STEPS_PER_EVAL_EPISODE} steps (timeout).")
-                    truncated = True
 
             total_rewards += episode_reward
 
@@ -988,8 +1251,11 @@ def main(args):
 
     print("--- Initializing Student (PPO) ---")
     initial_params = sample_task_params(0.0)
-    initial_env = build_and_setup_env(args.env, args.body, initial_params)
-    student = PPO("MlpPolicy", initial_env, verbose=0, tensorboard_log=os.path.join(log_dir, "student"))
+    initial_env = build_and_setup_env(args.env, args.body, initial_params, args=args)
+
+    ppo_kwargs = getattr(args, 'ppo_config', {})
+    print("Using PPO hyperparameters for student:", ppo_kwargs)
+    student = PPO("MlpPolicy", initial_env, verbose=0, tensorboard_log=os.path.join(log_dir, "student"), **ppo_kwargs)
     initial_env.close()
 
     difficulty_ratio = 0.0
@@ -1003,7 +1269,7 @@ def main(args):
             print(f"\n--- Stage {stage}/{args.total_stages} | Difficulty: {difficulty_ratio:.3f} ---")
             print(f"Task parameters: {task_params}")
 
-            env_fn = lambda: build_and_setup_env(args.env, args.body, task_params, render_mode=render_mode)
+            env_fn = lambda: build_and_setup_env(args.env, args.body, task_params, render_mode=render_mode, args=args)
             vec_env = make_vec_env(env_fn, n_envs=1)
 
             if render_mode == "human":
@@ -1048,7 +1314,6 @@ if __name__ == "__main__":
     parser = add_acl_args(parser)
     args = parser.parse_args()
     main(args)
-
 
 ===== .\scripts\train_marl.py =====
 # scripts/train_marl.py
@@ -1095,8 +1360,8 @@ def add_marl_args(parser):
     parser.add_argument("--fullscreen", action="store_true", help="Render in fullscreen.")
     parser.add_argument("--run_id", type=str, default="marl_run1", help="Identifier for the training run.")
     parser.add_argument("--use-tune", action="store_true", help="Use Ray Tune for hyperparameter tuning.")
+    parser.add_argument('--horizon', type=int, default=3000, help="Max steps per episode.")
     
-    # Advanced technique arguments
     parser.add_argument("--shared-policy", action="store_true", help="Use a single shared policy for all agents.")
     parser.add_argument("--use-cc", action="store_true", help="Use a Centralized Critic.")
     return parser
@@ -1177,10 +1442,6 @@ def get_env_creator(mode):
     return wrapped_env_creator
 
 def check_environment_mode(args):
-    """
-    Placeholder function to run a random interactive session for debugging the environment.
-    (Currently not implemented).
-    """
     pass
 
 def main(args):
@@ -1189,17 +1450,18 @@ def main(args):
         check_environment_mode(args)
         return
 
+    if not hasattr(args, 'horizon'):
+        args.horizon = 3000
+
     env_name = f"marl-{args.mode}-v0"
     register_env(env_name, get_env_creator(args.mode))
 
-    env_config = {"n_agents": args.n_agents, "agent_body_type": args.body, "horizon": 1500}
+    env_config = {"n_agents": args.n_agents, "agent_body_type": args.body, "horizon": args.horizon}
     
-    # Create a temporary environment to infer observation and action spaces
     with get_env_creator(args.mode)(env_config) as temp_env:
         obs_space = temp_env.observation_space["agent_0"]
         act_space = temp_env.action_space["agent_0"]
 
-    # --- Build PPOConfig from `args` ---
     ppo_config_dict = getattr(args, 'ppo_config', {})
     training_config = ppo_config_dict.get('training', {})
     model_config = ppo_config_dict.get('model', {})
@@ -1215,7 +1477,6 @@ def main(args):
         .resources(num_gpus=args.num_gpus)
     )
 
-    # --- Configure Multi-Agent Setup and Advanced Techniques ---
     if hasattr(args, 'shared_policy') and args.shared_policy:
         print("🚀 Using Parameter Sharing: A single policy for all agents.")
         config.multi_agent(
@@ -1231,10 +1492,8 @@ def main(args):
 
     if hasattr(args, 'use_cc') and args.use_cc:
         print("🚀 Activating Centralized Critic.")
-        # This is a top-level PPO config parameter, not part of .training()
         config.update_from_dict({"use_centralized_value_function": True})
 
-    # --- Training Execution (Tune or Single Run) ---
     use_tune = getattr(args, 'use_tune', False)
     if use_tune:
         print("🚀 Starting MARL training with Ray Tune...")
@@ -1302,7 +1561,6 @@ def main(args):
         print(f"🚀 Starting a single MARL training run for {args.iterations} iterations...")
         algo = config.build()
         
-        # Convert relative path to absolute to be compatible with pyarrow
         output_dir = os.path.abspath(os.path.join("output", "marl", args.run_id))
         os.makedirs(output_dir, exist_ok=True)
         print(f"Checkpoints will be saved to: {output_dir}")
@@ -1358,7 +1616,6 @@ import sys
 import argparse
 import time
 
-# Add root folder to import path
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from stable_baselines3 import PPO
@@ -1380,6 +1637,7 @@ def add_ppo_args(parser):
     train_group.add_argument('--save_freq', type=int, default=50_000)
     train_group.add_argument('--n_envs', type=int, default=4)
     train_group.add_argument('--render', action='store_true')
+    parser.add_argument('--horizon', type=int, default=3000, help="Max steps per episode.")
     return parser
 
 
@@ -1395,13 +1653,17 @@ def main(args):
         args.n_envs = 1
 
     user_params = collect_env_params(args.env, args)
-    env_lambda = lambda: build_and_setup_env(args.env, args.body, user_params, render_mode=train_render_mode)
+    env_lambda = lambda: build_and_setup_env(args.env, args.body, user_params, render_mode=train_render_mode, args=args)
     env = make_vec_env(env_lambda, n_envs=args.n_envs)
 
     if args.render:
         setup_render_window(env.envs[0], args)
+    
+    ppo_kwargs = getattr(args, 'ppo_config', {})
+    print("Using PPO hyperparameters:", ppo_kwargs)
 
-    model = PPO("MlpPolicy", env, verbose=1, tensorboard_log=os.path.join(output_base_dir, "logs"))
+    model = PPO("MlpPolicy", env, verbose=1, tensorboard_log=os.path.join(output_base_dir, "logs"), **ppo_kwargs)
+    
     checkpoint_callback = CheckpointCallback(
         save_freq=max(args.save_freq // args.n_envs, 1),
         save_path=model_dir,
@@ -1426,7 +1688,6 @@ if __name__ == '__main__':
     parser = add_ppo_args(parser)
     args = parser.parse_args()
     main(args)
-
 
 ===== .\scripts\watch.py =====
 # ===== .\scripts\watch.py =====
@@ -2051,6 +2312,7 @@ class MultiAgentParkour(MultiAgentEnv):
 
 
 ===== .\TeachMyAgent\environments\envs\parametric_continuous_parkour.py =====
+# TeachMyAgent/environments/envs/parametric_continuous_parkour.py
 import math
 import os
 
@@ -2109,7 +2371,8 @@ class ContactDetector(WaterContactDetector, ClimbingContactDetector):
             ClimbingContactDetector.EndContact(self, contact)
         else:
             for body in bodies:
-                if (body.userData.object_type == CustomUserDataObjectTypes.BODY_OBJECT and
+                if (hasattr(body.userData, 'object_type') and
+                        body.userData.object_type == CustomUserDataObjectTypes.BODY_OBJECT and
                         body.userData.check_contact):
                     body.userData.has_contact = False
 
@@ -2130,8 +2393,9 @@ class LidarCallback(Box2D.b2.rayCastCallback):
             return -1
         self.p2 = point
         self.fraction = fraction
-        self.is_water_detected = True if hasattr(fixture.body.userData, 'object_type') and fixture.body.userData.object_type == CustomUserDataObjectTypes.WATER else False
-        self.is_creeper_detected = True if hasattr(fixture.body.userData, 'object_type') and fixture.body.userData.object_type == CustomUserDataObjectTypes.SENSOR_GRIP_TERRAIN else False
+        if hasattr(fixture.body.userData, 'object_type'):
+            self.is_water_detected = fixture.body.userData.object_type == CustomUserDataObjectTypes.WATER
+            self.is_creeper_detected = fixture.body.userData.object_type == CustomUserDataObjectTypes.SENSOR_GRIP_TERRAIN
         return fraction
 
 FPS    = 50
@@ -2149,22 +2413,22 @@ INITIAL_TERRAIN_STARTPAD = 20
 FRICTION = 2.5
 WATER_DENSITY = 1.0
 NB_FIRST_STEPS_HANG = 5
+HULL_CONTACT_PENALTY = 0.1
 
 class ParametricContinuousParkour(gym.Env, EzPickle):
     metadata = {'render_modes': ['human', 'rgb_array'], 'video.frames_per_second': FPS}
     
-    # === NÂNG CẤP: Thêm `horizon` vào __init__ để giới hạn độ dài episode ===
     def __init__(self, agent_body_type, CPPN_weights_path=None, input_CPPN_dim=3,
                  terrain_cppn_scale=10, ceiling_offset=200, ceiling_clip_offset=0,
                  lidars_type='full', water_clip=20, movable_creepers=False,
-                 render_mode=None, horizon=1500, **walker_args):
+                 render_mode=None, horizon=3000, **walker_args):
 
         super().__init__()
         self.rendering_viewer_w = VIEWPORT_W
         self.rendering_viewer_h = VIEWPORT_H
         self.render_mode = render_mode
-        self.horizon = horizon  # Lưu lại horizon
-        self.ts = 0  # Thêm biến đếm bước
+        self.horizon = horizon
+        self.ts = 0
 
         self.np_random = None
         if lidars_type == "down":
@@ -2272,15 +2536,14 @@ class ParametricContinuousParkour(gym.Env, EzPickle):
             return
         self.world.contactListener = None
         for t in self.terrain:
-            self.world.DestroyBody(t)
+            if t: self.world.DestroyBody(t)
         self.terrain = []
-        self.agent_body.destroy(self.world)
+        if self.agent_body: self.agent_body.destroy(self.world)
 
     def reset(self, seed=None, options=None):
         super().reset(seed=seed)
         self._destroy()
 
-        # === NÂNG CẤP: Reset biến đếm bước ===
         self.ts = 0
 
         self.world = Box2D.b2World(contactListener=self.contact_listener)
@@ -2326,13 +2589,11 @@ class ParametricContinuousParkour(gym.Env, EzPickle):
         self.nb_steps_outside_water = 0
         self.nb_steps_under_water = 0
         self.episodic_reward = 0
-        self.ts = 0 # Reset lại biến đếm sau khi các step khởi tạo
+        self.ts = 0
         
-        # === NÂNG CẤP: Tuân thủ API Gymnasium (trả về 2-tuple) ===
         return np.array(initial_state, dtype=np.float32), {}
 
     def step(self, action):
-        # === NÂNG CẤP: Tăng biến đếm bước ===
         self.ts += 1
         
         is_agent_dead = False
@@ -2381,16 +2642,13 @@ class ParametricContinuousParkour(gym.Env, EzPickle):
                 self.nb_steps_under_water = 0
 
         state = [
-            head.angle,
-            2.0 * head.angularVelocity / FPS,
+            head.angle, 2.0 * head.angularVelocity / FPS,
             0.3 * vel.x * (VIEWPORT_W / SCALE) / FPS,
             0.3 * vel.y * (VIEWPORT_H / SCALE) / FPS,
             1.0 if is_under_water else 0.0,
             1.0 if is_agent_dead else 0.0
         ]
-
         state.extend(self.agent_body.get_motors_state())
-
         if self.agent_body.body_type == BodyTypesEnum.CLIMBER:
             state.extend(self.agent_body.get_sensors_state())
 
@@ -2420,6 +2678,11 @@ class ParametricContinuousParkour(gym.Env, EzPickle):
         for a in action:
             reward -= self.agent_body.TORQUE_PENALTY * 80 * np.clip(np.abs(a), 0, 1)
 
+        hull = self.agent_body.body_parts[0]
+        if hasattr(hull.userData, 'has_contact') and hull.userData.has_contact:
+            if self.agent_body.body_type == BodyTypesEnum.WALKER:
+                 reward -= HULL_CONTACT_PENALTY
+
         terminated = False
         if self.critical_contact or pos[0] < 0 or is_agent_dead:
             reward = -100
@@ -2429,13 +2692,11 @@ class ParametricContinuousParkour(gym.Env, EzPickle):
             terminated = True
         self.episodic_reward += reward
 
-        # === NÂNG CẤP: Sử dụng horizon để quyết định truncated ===
         truncated = self.ts >= self.horizon
         
         if self.render_mode == "human":
             self.render()
 
-        # === NÂNG CẤP: Tuân thủ API Gymnasium (trả về 5-tuple) ===
         info = {"success": self.episodic_reward > 230}
         return np.array(state, dtype=np.float32), reward, terminated, truncated, info
     
@@ -2628,7 +2889,7 @@ class ParametricContinuousParkour(gym.Env, EzPickle):
         for obj in self.drawlist:
             color1 = obj.color1
             color2 = obj.color2
-            if hasattr(obj.userData, 'object_type') and obj.userData.object_type == CustomUserDataObjectTypes.BODY_SENSOR and obj.userData.has_joint:
+            if hasattr(obj.userData, 'object_type') and obj.userData.object_type == CustomUserDataObjectTypes.BODY_SENSOR and hasattr(obj.userData, 'has_joint') and obj.userData.has_joint:
                 color1 = (1.0, 1.0, 0.0)
                 color2 = (1.0, 1.0, 0.0)
             elif obj == self.agent_body.reference_head_object:
@@ -6818,7 +7079,7 @@ class Vec2:
 
 
 ===== .\utils\env_utils.py =====
-# env_utils.py
+# utils/env_utils.py
 import gymnasium as gym
 import numpy as np
 import tkinter as tk
@@ -6863,7 +7124,7 @@ def collect_env_params(env_key, args):
     
     return params
 
-def build_and_setup_env(env_key, body_name, user_params, render_mode=None):
+def build_and_setup_env(env_key, body_name, user_params, render_mode=None, args=None):
     """Create and configure the environment with default and user parameters."""
     
     mapping = {
@@ -6879,6 +7140,9 @@ def build_and_setup_env(env_key, body_name, user_params, render_mode=None):
     if render_mode:
         env_kwargs['render_mode'] = render_mode
         
+    if args and hasattr(args, 'horizon') and args.horizon is not None:
+        env_kwargs['horizon'] = args.horizon
+
     if env_key == "parkour":
         body_type = BodiesEnum.get_body_type(body_name)
         lidar_map = {BodyTypesEnum.CLIMBER: 'up', BodyTypesEnum.SWIMMER: 'full'}
@@ -6892,7 +7156,6 @@ def build_and_setup_env(env_key, body_name, user_params, render_mode=None):
     
     env = gym.make(env_id, **env_kwargs)
     
-    # --- Apply default and user-defined parameters ---
     if env_key == "stump":
         default_params = {"roughness": 0.0, "stump_height": (0.1, 0.05)}
         default_params.update(user_params)
@@ -6930,7 +7193,6 @@ def setup_render_window(env, args):
         
         print(f"Render resolution set to: {render_width}x{render_height}")
         env.unwrapped._SET_RENDERING_VIEWPORT_SIZE(render_width, render_height, keep_ratio=False)
-
 
 ===== .\utils\marl_utils.py =====
 import gymnasium as gym
@@ -7062,7 +7324,16 @@ def add_render_args(parser):
     configs/
         main_pipeline.yaml
     output/
+        acl/
+            acl_test/
+                logs/
+                    student/
+                        PPO_0/
+                            events.out.tfevents.1761579507.HoangNam.8948.0
+                models/
+                    student_final.zip
         marl/
+            marl_run_1/
             marl_shared_cc/
                 algorithm_state.pkl
                 class_and_ctor_args.pkl
@@ -7160,10 +7431,28 @@ def add_render_args(parser):
                                 metadata.json
                                 module_state.pkl
         ppo/
+            my_first_run/
+                logs/
+                    PPO_1/
+                        events.out.tfevents.1761578641.HoangNam.8024.0
+                models/
+                    ppo_model_100000_steps.zip
+                    ppo_model_150000_steps.zip
+                    ppo_model_200000_steps.zip
+                    ppo_model_250000_steps.zip
+                    ppo_model_300000_steps.zip
+                    ppo_model_350000_steps.zip
+                    ppo_model_400000_steps.zip
+                    ppo_model_450000_steps.zip
+                    ppo_model_500000_steps.zip
+                    ppo_model_50000_steps.zip
+                    ppo_model_final.zip
             ppo_pipeline_run_1/
                 logs/
                     PPO_1/
                         events.out.tfevents.1761574084.HoangNam.12932.0
+                    PPO_2/
+                        events.out.tfevents.1761579450.HoangNam.21756.0
                 models/
                     ppo_model_1000000_steps.zip
                     ppo_model_100000_steps.zip
@@ -7186,11 +7475,19 @@ def add_render_args(parser):
                     ppo_model_900000_steps.zip
                     ppo_model_950000_steps.zip
                     ppo_model_final.zip
+            test1/
+                logs/
+                    PPO_1/
+                        events.out.tfevents.1761579471.HoangNam.4472.0
+                models/
+                    ppo_model_final.zip
     preprocessing/
         convert_weight.py
         __init__.py
     scripts/
+        calculate_map_length.py
         check_all.py
+        check_map_length.py
         demo.py
         record.py
         run_single_test.py
