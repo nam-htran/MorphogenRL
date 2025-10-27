@@ -70,6 +70,7 @@ requests==2.32.5
 rich==14.2.0
 rpds-py==0.28.0
 scipy==1.16.2
+screeninfo==0.8.1
 six==1.17.0
 stable_baselines3==2.7.0
 swig==4.3.1.post0
