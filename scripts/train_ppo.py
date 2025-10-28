@@ -1,3 +1,4 @@
+# scripts/train_ppo.py
 import os
 import sys
 import argparse
@@ -21,7 +22,7 @@ def add_ppo_args(parser):
     train_group = parser.add_argument_group('PPO Training Parameters')
     train_group.add_argument('--total_timesteps', type=int, default=1_000_000)
     train_group.add_argument('--run_id', type=str, default='ppo_run1')
-    train_group.add_argument('--save_freq', type=int, default=50_000)
+    train_group.add_argument('--save_freq', type=int, default=100_000)
     train_group.add_argument('--n_envs', type=int, default=16)
     train_group.add_argument('--render', action='store_true')
     parser.add_argument('--horizon', type=int, default=5000)
@@ -44,7 +45,7 @@ def main(args):
     env_lambda = lambda: build_and_setup_env(args.env, args.body, user_params, render_mode=train_render_mode, args=args)
     
     print("Creating vectorized and normalized environment...")
-    env = make_vec_env(env_lambda, n_envs=args.n_envs, vec_env_cls=None, vec_env_kwargs=None)
+    env = make_vec_env(env_lambda, n_envs=args.n_envs)
     env = VecNormalize(env, norm_obs=True, norm_reward=True, clip_obs=10.)
     print("Environment created successfully.")
 
@@ -52,6 +53,17 @@ def main(args):
         setup_render_window(env.envs[0], args)
     
     ppo_kwargs = getattr(args, 'ppo_config', {})
+    
+    # MODIFICATION: Evaluate schedule strings from YAML
+    for key in ['learning_rate', 'clip_range']:
+        if key in ppo_kwargs and isinstance(ppo_kwargs[key], str):
+            print(f"Parsing schedule for {key} from string: {ppo_kwargs[key]}")
+            try:
+                ppo_kwargs[key] = eval(ppo_kwargs[key])
+            except Exception as e:
+                print(f"ERROR: Could not evaluate the {key} string: {e}")
+                sys.exit(1)
+
     print("Using PPO hyperparameters:", ppo_kwargs)
 
     model = PPO("MlpPolicy", env, verbose=1, tensorboard_log=os.path.join(output_base_dir, "logs"), **ppo_kwargs)
