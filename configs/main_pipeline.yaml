@@ -18,7 +18,7 @@ PPO:
     gamma: 0.99
     n_steps: 1024
     ent_coef: 0.01 
-    learning_rate: 0.0003 
+    learning_rate: "lambda progress_remaining: progress_remaining * 3e-4"
     vf_coef: 0.5
     max_grad_norm: 0.5
     n_epochs: 10
