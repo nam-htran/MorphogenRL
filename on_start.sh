@@ -1,9 +1,8 @@
 #!/bin/bash
-
 set -e
 
 echo "==================================================="
-echo "--- EXECUTING REMOTE PROVISIONING SCRIPT (Vast.ai - V12) ---"
+echo "--- EXECUTING REMOTE PROVISIONING SCRIPT (Vast.ai - V13) ---"
 echo "==================================================="
 
 if [ -z "$MODEL_SET" ]; then echo "[ERROR] Env Var 'MODEL_SET' is not set!"; exit 1; fi
@@ -13,9 +12,14 @@ if [ -z "$UPSTASH_REDIS_URL" ]; then echo "[ERROR] Env Var 'UPSTASH_REDIS_URL' i
 echo "[PROVISION] Model Set: '${MODEL_SET}'"
 echo "[PROVISION] Low VRAM Mode: '${LOW_VRAM_MODE:-false}'"
 
-echo "[PROVISION] Downgrading NumPy to be compatible with PyTorch..."
+echo "[PROVISION] Step 1: Resolving library dependency conflicts..."
+echo "[PROVISION] Downgrading NumPy for PyTorch compatibility..."
 pip install --force-reinstall "numpy<2"
-echo "[PROVISION] NumPy downgrade complete."
+
+echo "[PROVISION] Re-installing OpenCV for NumPy 1.x compatibility..."
+pip uninstall -y opencv-python opencv-python-headless
+pip install "opencv-python==4.9.0.80"
+echo "[PROVISION] Dependency conflicts resolved."
 echo "------------------------------------------"
 
 export PROJECT_ROOT="/app/REST_API_GPU_V2R"
@@ -72,6 +76,7 @@ echo "------------------------------------------"
 
 LOG_FILE="/tmp/server_log.txt"
 echo "[PROVISION] Starting API server in background..."
+
 python -m api.main --port 8080 --ngrok_authtoken "${NGROK_AUTHTOKEN}" \
                    --model_set "${MODEL_SET}" ${LOW_VRAM_MODE_FLAG} \
                    --cache-path "${PROJECT_ROOT}/api_cache" > $LOG_FILE 2>&1 &
