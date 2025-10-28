@@ -23,7 +23,7 @@ PPO:
     max_grad_norm: 0.5
 
 ACL:
-  enabled: false
+  enabled: true
   run_id: "acl_final_run"
   env: "parkour"
   body: "climbing_profile_chimpanzee"
@@ -41,14 +41,15 @@ MARL:
   mode: "interactive"
   n_agents: 2
   body: "classic_bipedal"
-  num_workers: 8
+  num_workers: 2
   num_gpus: 2
   horizon: 3000
 
   shared_policy: true
   use_cc: true
 
-  use_tune: true 
+  use_tune: false
+  iterations: 2500
   
   tune_config:
     run_config:
