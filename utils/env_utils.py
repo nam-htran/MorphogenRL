@@ -64,8 +64,8 @@ def build_and_setup_env(env_key, body_name, user_params, render_mode=None, args=
 
     if env_key == "parkour":
         body_type = BodiesEnum.get_body_type(body_name)
-        lidar_map = {BodyTypesEnum.CLIMBER: 'up', BodyTypesEnum.SWIMMER: 'full'}
-        env_kwargs['lidars_type'] = lidar_map.get(body_type, 'down')
+        lidar_map = {BodyTypesEnum.CLIMBER: 'up', BodyTypesEnum.SWIMMER: 'full', BodyTypesEnum.WALKER: 'full'}
+        env_kwargs['lidars_type'] = lidar_map.get(body_type, 'down') # 'down' sẽ là fallback
         print(f"Automatically set Lidar to '{env_kwargs['lidars_type']}' for body '{body_name}'.")
 
         if body_type in [BodyTypesEnum.SWIMMER, BodyTypesEnum.AMPHIBIAN]:

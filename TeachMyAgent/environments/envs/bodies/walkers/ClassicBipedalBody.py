@@ -20,7 +20,7 @@ class ClassicBipedalBody(WalkerAbstractBody):
         This results in bodies with wrong positions that Box2D's solver has to reposition at the first step of the environment.
         This new version uses straight legs and fixed bad positions.
     '''
-    def __init__(self, scale, motors_torque=80, nb_steps_under_water=600, reset_on_hull_critical_contact=False):
+    def __init__(self, scale, motors_torque=120, nb_steps_under_water=600, reset_on_hull_critical_contact=False):
         '''
             Creates a bipedal walker.
 

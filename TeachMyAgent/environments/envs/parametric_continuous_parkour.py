@@ -134,8 +134,9 @@ class ParametricContinuousParkour(gym.Env, EzPickle):
         if body_type in [BodyTypesEnum.SWIMMER, BodyTypesEnum.AMPHIBIAN]:
             self.agent_body = BodiesEnum[agent_body_type].value(SCALE, **walker_args)
         elif body_type == BodyTypesEnum.WALKER:
+            # MODIFICATION: Set reset_on_hull_critical_contact to True
             self.agent_body = BodiesEnum[agent_body_type].value(SCALE, **walker_args,
-                                                                reset_on_hull_critical_contact=False)
+                                                                reset_on_hull_critical_contact=True)
         else:
             self.agent_body = BodiesEnum[agent_body_type].value(SCALE, **walker_args)
 
@@ -177,7 +178,7 @@ class ParametricContinuousParkour(gym.Env, EzPickle):
             total_obs_size += len(self.agent_body.get_sensors_state())
         high = np.array([np.inf]*total_obs_size)
         self.observation_space = spaces.Box(-high, high, dtype=np.float32)
-    
+
     def _create_terrain_fixtures(self):
         self.fd_polygon = fixtureDef(shape=polygonShape(vertices=[(0,0),(1,0),(1,-1),(0,-1)]), friction=FRICTION)
         self.fd_edge = fixtureDef(shape=edgeShape(vertices=[(0,0),(1,1)]), friction=FRICTION)
@@ -244,6 +245,10 @@ class ParametricContinuousParkour(gym.Env, EzPickle):
         self.water_y = self.GROUND_LIMIT
         self.nb_steps_outside_water = 0
         self.nb_steps_under_water = 0
+        
+        # MODIFICATION: Initialize counters for new reward shaping
+        self.flipped_counter = 0
+        self.prev_pos_x = TERRAIN_STEP * self.TERRAIN_STARTPAD / 2
 
         self._generate_terrain()
         self._generate_agent()
@@ -277,6 +282,10 @@ class ParametricContinuousParkour(gym.Env, EzPickle):
         self.episodic_reward = 0
         self.ts = 0
         
+        # MODIFICATION: Reset counters again after initial steps
+        self.flipped_counter = 0
+        self.prev_pos_x = self.agent_body.reference_head_object.position.x
+
         return np.array(initial_state, dtype=np.float32), {}
 
     def step(self, action):
@@ -352,14 +361,26 @@ class ParametricContinuousParkour(gym.Env, EzPickle):
         self.scroll = [pos[0] - self.rendering_viewer_w / SCALE / 5,
                     pos[1] - self.rendering_viewer_h / SCALE / 2.5]
 
+        # --- MODIFICATION START: REWARD SHAPING ---
         shaping = 130 * pos[0] / SCALE
-        if not (hasattr(self.agent_body, "remove_reward_on_head_angle") and self.agent_body.remove_reward_on_head_angle):
-            shaping -= 5.0 * abs(state[0])
+        
+        # MODIFICATION: Removed angle penalty
+        # if not (hasattr(self.agent_body, "remove_reward_on_head_angle") and self.agent_body.remove_reward_on_head_angle):
+        #     shaping -= 5.0 * abs(state[0])
 
         reward = 0
         if self.prev_shaping is not None:
             reward = shaping - self.prev_shaping
         self.prev_shaping = shaping
+
+        # MODIFICATION: Add penalty for stalling
+        progress = pos[0] - self.prev_pos_x
+        if progress < 0.001 and vel.x < 0.01:
+            reward -= 0.05
+        self.prev_pos_x = pos[0]
+
+        # MODIFICATION: Add reward for forward velocity
+        reward += vel.x * 0.1
 
         for a in action:
             reward -= self.agent_body.TORQUE_PENALTY * 80 * np.clip(np.abs(a), 0, 1)
@@ -369,15 +390,26 @@ class ParametricContinuousParkour(gym.Env, EzPickle):
             if self.agent_body.body_type == BodyTypesEnum.WALKER:
                  reward -= HULL_CONTACT_PENALTY
 
+        # MODIFICATION: Add termination condition for being flipped over
+        if abs(state[0]) > 1.5: # Approx > 85 degrees
+            self.flipped_counter += 1
+        else:
+            self.flipped_counter = 0
+
         terminated = False
+        if self.flipped_counter > 50: # Terminate if flipped for ~1 second
+            reward = -100
+            terminated = True
+
         if self.critical_contact or pos[0] < 0 or is_agent_dead:
             reward = -100
             terminated = True
         
         if pos[0] > (TERRAIN_LENGTH + self.TERRAIN_STARTPAD - TERRAIN_END) * TERRAIN_STEP:
             terminated = True
+        # --- MODIFICATION END ---
+            
         self.episodic_reward += reward
-
         truncated = self.ts >= self.horizon
         
         if self.render_mode == "human":

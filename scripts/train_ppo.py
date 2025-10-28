@@ -1,4 +1,3 @@
-# scripts/train_ppo.py
 import os
 import sys
 import argparse
@@ -9,11 +8,11 @@ sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from stable_baselines3 import PPO
 from stable_baselines3.common.callbacks import CheckpointCallback
 from stable_baselines3.common.env_util import make_vec_env
+from stable_baselines3.common.vec_env import VecNormalize
 
 import TeachMyAgent.environments
 from utils.env_utils import build_and_setup_env, collect_env_params, setup_render_window
 from utils.shared_args import add_common_args, add_environment_args, add_render_args
-
 
 def add_ppo_args(parser):
     parser = add_common_args(parser)
@@ -23,9 +22,9 @@ def add_ppo_args(parser):
     train_group.add_argument('--total_timesteps', type=int, default=1_000_000)
     train_group.add_argument('--run_id', type=str, default='ppo_run1')
     train_group.add_argument('--save_freq', type=int, default=50_000)
-    train_group.add_argument('--n_envs', type=int, default=4)
+    train_group.add_argument('--n_envs', type=int, default=16)
     train_group.add_argument('--render', action='store_true')
-    parser.add_argument('--horizon', type=int, default=3000, help="Max steps per episode.")
+    parser.add_argument('--horizon', type=int, default=5000)
     return parser
 
 
@@ -41,8 +40,13 @@ def main(args):
         args.n_envs = 1
 
     user_params = collect_env_params(args.env, args)
+        
     env_lambda = lambda: build_and_setup_env(args.env, args.body, user_params, render_mode=train_render_mode, args=args)
-    env = make_vec_env(env_lambda, n_envs=args.n_envs)
+    
+    print("Creating vectorized and normalized environment...")
+    env = make_vec_env(env_lambda, n_envs=args.n_envs, vec_env_cls=None, vec_env_kwargs=None)
+    env = VecNormalize(env, norm_obs=True, norm_reward=True, clip_obs=10.)
+    print("Environment created successfully.")
 
     if args.render:
         setup_render_window(env.envs[0], args)
@@ -66,6 +70,10 @@ def main(args):
     final_model_path = os.path.join(model_dir, "ppo_model_final.zip")
     model.save(final_model_path)
     print(f"Final model saved to: {final_model_path}")
+    
+    stats_path = os.path.join(output_base_dir, "vecnormalize.pkl")
+    env.save(stats_path)
+    print(f"VecNormalize stats saved to: {stats_path}")
 
     env.close()
     return final_model_path

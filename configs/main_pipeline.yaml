@@ -10,17 +10,21 @@ PPO:
   body: "classic_bipedal"
   
   total_timesteps: 10000000
-  save_freq: 250000
+  save_freq: 100000
   n_envs: 16
-  horizon: 3000
+  horizon: 5000
 
   ppo_config:
     gamma: 0.99
-    n_steps: 2048
+    n_steps: 1024
     ent_coef: 0.01 
-    learning_rate: 0.0003
+    learning_rate: 0.0003 
     vf_coef: 0.5
     max_grad_norm: 0.5
+    n_epochs: 10
+    batch_size: 64
+    gae_lambda: 0.95
+    clip_range: 0.2 
 
 ACL:
   enabled: true
@@ -32,7 +36,7 @@ ACL:
   eval_episodes: 20
   mastery_threshold: 200.0
   difficulty_increment: 0.005
-  horizon: 4000
+  horizon: 5000
 
 
 MARL:
@@ -43,7 +47,7 @@ MARL:
   body: "classic_bipedal"
   num_workers: 2
   num_gpus: 2
-  horizon: 3000
+  horizon: 5000
 
   shared_policy: true
   use_cc: true
