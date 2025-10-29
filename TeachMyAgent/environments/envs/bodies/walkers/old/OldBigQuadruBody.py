@@ -15,33 +15,16 @@ SPEED_HIP     = 4
 SPEED_KNEE    = 6
 
 class OldBigQuadruBody(WalkerAbstractBody):
-    '''
-        Quadrupedal walker implemented in https://github.com/flowersteam/teachDeepRL.
-    '''
     def __init__(self, scale, motors_torque=300, nb_steps_under_water=600, reset_on_hull_critical_contact=False):
-        '''
-            Creates a big quadrupedal walker.
-
-            Args:
-                scale: Scale value used in the environment (to adapt the embodiment to its environment)
-                motors_torque: Maximum torque the embodiment can use on its motors
-                 nb_steps_under_water: How many consecutive steps the embodiment can survive under water
-                reset_on_hull_critical_contact: Whether a contact detected with the head should stop the episode
-        '''
         super(OldBigQuadruBody, self).__init__(scale, motors_torque, nb_steps_under_water)
-        self.LEG_DOWN = -8 / self.SCALE  # 0 = center of hull
+        self.LEG_DOWN = -8 / self.SCALE
         self.LEG_W, self.LEG_H = 10 / self.SCALE, 51 / self.SCALE
-        self.TORQUE_PENALTY = 0.00035 / 2 # Because 2 pairs of legs
+        self.TORQUE_PENALTY = 0.00035 / 2
         self.reset_on_hull_critical_contact = reset_on_hull_critical_contact
-
-        # Approximative...
         self.AGENT_WIDTH = HULL_BOTTOM_WIDTH / self.SCALE
-        self.AGENT_HEIGHT = 25 / self.SCALE + \
-                            self.LEG_H * 2 - self.LEG_DOWN
+        self.AGENT_HEIGHT = 25 / self.SCALE + self.LEG_H * 2 - self.LEG_DOWN
         self.AGENT_CENTER_HEIGHT = self.LEG_H * 2 + self.LEG_DOWN
-
         self.old_morphology = True
-
         self.nb_motors = 8
         self.state_size = self.nb_motors * 2 + 4
 
@@ -65,9 +48,9 @@ class OldBigQuadruBody(WalkerAbstractBody):
         self.body_parts.append(hull)
         self.reference_head_object = hull
 
-        # ===== BẮT ĐẦU SỬA LỖI VẬT LÝ =====
-        # Sử dụng logic tính toán vị trí tuyệt đối để tăng độ ổn định
-        for x_anchor_rel in [-0.7, 0.5]: # Tỷ lệ vị trí mỏ neo trên thân
+        # ===== START: PHYSICS FIX =====
+        # Using absolute position calculation for better stability
+        for x_anchor_rel in [-0.7, 0.5]: # Relative anchor position on the hull
             absolute_x = init_x + np.interp(x_anchor_rel, [-1,1], [-HULL_BOTTOM_WIDTH / 2 / self.SCALE, HULL_BOTTOM_WIDTH / 2 / self.SCALE])
             for i in [-1, +1]:
                 leg = world.CreateDynamicBody(position=(absolute_x, init_y - self.LEG_H / 2 - self.LEG_DOWN), fixtures=LEG_FD)

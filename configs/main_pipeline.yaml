@@ -4,21 +4,23 @@ WATCH:
   auto_skip_stuck: true
 
 PPO:
-  enabled: true 
-  run_id: "ppo_final_stable_run"
+  enabled: true
+  run_id: "ppo_reach_the_end_run"
   env: "parkour"
   body: "classic_bipedal"
   
-  total_timesteps: 10000000
-  save_freq: 100000
+  total_timesteps: 3000000 
+  save_freq: 250000
   n_envs: 16
   horizon: 5000
 
   ppo_config:
-    gamma: 0.99
-    n_steps: 1024
+    gamma: 0.999 
+    n_steps: 4096 
     ent_coef: 0.01 
-    learning_rate: "lambda progress_remaining: progress_remaining * 3e-4"
+    learning_rate_schedule:
+      type: "linear"
+      initial_value: 3e-4
     vf_coef: 0.5
     max_grad_norm: 0.5
     n_epochs: 10
@@ -27,54 +29,62 @@ PPO:
     clip_range: 0.2 
 
 ACL:
-  enabled: true
-  run_id: "acl_final_run"
+  enabled: false
+  run_id: "acl_reach_the_end_run"
   env: "parkour"
   body: "climbing_profile_chimpanzee"
-  total_stages: 1000
-  student_steps_per_stage: 32768 
+  total_stages: 200
+  student_steps_per_stage: 100000 
   eval_episodes: 20
-  mastery_threshold: 200.0
-  difficulty_increment: 0.005
+  mastery_threshold: 180.0
+  difficulty_increment: 0.01
   horizon: 5000
-
+  n_envs: 8 
+  
+  ppo_config:
+    gamma: 0.999
+    n_steps: 4096
+    ent_coef: 0.01
+    learning_rate_schedule:
+      type: "linear"
+      initial_value: 3e-4
+    vf_coef: 0.5
+    max_grad_norm: 0.5
+    n_epochs: 10
+    batch_size: 128
+    gae_lambda: 0.95
+    clip_range: 0.2
 
 MARL:
-  enabled: true 
-  run_id: "marl_final_tuned_run"
+  enabled: false
+  run_id: "marl_reach_the_end_run"
   mode: "interactive"
   n_agents: 2
   body: "classic_bipedal"
-  num_workers: 2
-  num_gpus: 2
+  num_workers: 4 
+  num_gpus: 1
   horizon: 5000
+  
+  reward_type: "individual"
 
   shared_policy: true
   use_cc: true
 
   use_tune: false
-  iterations: 2500
+  iterations: 5000
   
-  tune_config:
-    run_config:
-      name: "marl_final_tuning"
-      stop:
-        env_runners/episode_reward_mean: 280
-        training_iteration: 1000
-      checkpoint_config:
-        num_to_keep: 3
-        checkpoint_score_attribute: "env_runners/episode_reward_mean" 
-        checkpoint_score_order: "max"
-
-    search_space:
-      training:
-        lr: "tune.grid_search([0.0003, 0.0001, 0.00005])"
-        gamma: 0.99
-        lambda_: "tune.uniform(0.9, 1.0)"
-        clip_param: "tune.choice([0.1, 0.2])"
-        entropy_coeff: "tune.choice([0.0, 0.005, 0.01])"
+  ppo_config:
+    training:
+      gamma: 0.999
+      lr: 0.0003
+      lambda_: 0.95
+      clip_param: 0.2
+      entropy_coeff: 0.01
+      train_batch_size: 4096
+    
+    model:
+      fcnet_hiddens: [512, 512]
+      fcnet_activation: "tanh"
       
-      rl_module:
-        model_config:
-          fcnet_hiddens: "tune.choice([[512, 512], [256, 256]])"
-          fcnet_activation: "tanh"
+    env_runners:
+      rollout_fragment_length: 2048

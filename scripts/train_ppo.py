@@ -3,6 +3,7 @@ import os
 import sys
 import argparse
 import time
+from typing import Callable, Union
 
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
@@ -15,7 +16,7 @@ import TeachMyAgent.environments
 from utils.env_utils import build_and_setup_env, collect_env_params, setup_render_window
 from utils.shared_args import add_common_args, add_environment_args, add_render_args
 
-def add_ppo_args(parser):
+def add_ppo_args(parser: argparse.ArgumentParser) -> argparse.ArgumentParser:
     parser = add_common_args(parser)
     parser = add_environment_args(parser)
     parser = add_render_args(parser)
@@ -28,8 +29,24 @@ def add_ppo_args(parser):
     parser.add_argument('--horizon', type=int, default=5000)
     return parser
 
+def get_linear_schedule(initial_value: float) -> Callable[[float], float]:
+    """Returns a linear schedule function for learning rate."""
+    def func(progress_remaining: float) -> float:
+        return progress_remaining * initial_value
+    return func
 
-def main(args):
+def parse_schedule(config_value: Union[dict, float, str]):
+    """Safely parses a schedule configuration from a dictionary."""
+    if isinstance(config_value, dict):
+        schedule_type = config_value.get("type")
+        if schedule_type == "linear":
+            initial_val = float(config_value["initial_value"])
+            return get_linear_schedule(initial_val)
+        else:
+            raise ValueError(f"Unknown schedule type: {schedule_type}")
+    return float(config_value)
+
+def main(args: argparse.Namespace) -> str:
     output_base_dir = f"output/ppo/{args.run_id}"
     model_dir = os.path.join(output_base_dir, "models")
     os.makedirs(model_dir, exist_ok=True)
@@ -41,11 +58,10 @@ def main(args):
         args.n_envs = 1
 
     user_params = collect_env_params(args.env, args)
-        
     env_lambda = lambda: build_and_setup_env(args.env, args.body, user_params, render_mode=train_render_mode, args=args)
     
     print("Creating vectorized and normalized environment...")
-    env = make_vec_env(env_lambda, n_envs=args.n_envs)
+    env = make_vec_env(env_lambda, n_envs=args.n_envs, seed=getattr(args, 'seed', None))
     env = VecNormalize(env, norm_obs=True, norm_reward=True, clip_obs=10.)
     print("Environment created successfully.")
 
@@ -54,15 +70,10 @@ def main(args):
     
     ppo_kwargs = getattr(args, 'ppo_config', {})
     
-    # MODIFICATION: Evaluate schedule strings from YAML
-    for key in ['learning_rate', 'clip_range']:
-        if key in ppo_kwargs and isinstance(ppo_kwargs[key], str):
-            print(f"Parsing schedule for {key} from string: {ppo_kwargs[key]}")
-            try:
-                ppo_kwargs[key] = eval(ppo_kwargs[key])
-            except Exception as e:
-                print(f"ERROR: Could not evaluate the {key} string: {e}")
-                sys.exit(1)
+    if 'learning_rate_schedule' in ppo_kwargs:
+        ppo_kwargs['learning_rate'] = parse_schedule(ppo_kwargs.pop('learning_rate_schedule'))
+    if 'clip_range_schedule' in ppo_kwargs:
+        ppo_kwargs['clip_range'] = parse_schedule(ppo_kwargs.pop('clip_range_schedule'))
 
     print("Using PPO hyperparameters:", ppo_kwargs)
 
@@ -88,11 +99,5 @@ def main(args):
     print(f"VecNormalize stats saved to: {stats_path}")
 
     env.close()
+
     return final_model_path
-
-
-if __name__ == '__main__':
-    parser = argparse.ArgumentParser(description="Train PPO (Stable Baselines 3).")
-    parser = add_ppo_args(parser)
-    args = parser.parse_args()
-    main(args)
