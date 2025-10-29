@@ -56,13 +56,13 @@ ACL:
     clip_range: 0.2
 
 MARL:
-  enabled: false
+  enabled: true
   run_id: "marl_reach_the_end_run"
   mode: "interactive"
   n_agents: 2
   body: "classic_bipedal"
   num_workers: 4 
-  num_gpus: 1
+  num_gpus: 2
   horizon: 5000
   
   reward_type: "individual"
