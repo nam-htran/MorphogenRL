@@ -29,7 +29,7 @@ PPO:
     clip_range: 0.2 
 
 ACL:
-  enabled: false
+  enabled: true
   run_id: "acl_reach_the_end_run"
   env: "parkour"
   body: "climbing_profile_chimpanzee"
