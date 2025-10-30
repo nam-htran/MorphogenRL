@@ -54,28 +54,59 @@ def _watch_sb3(args):
         sys.exit(1)
 
     model_dir = os.path.dirname(args.model_path)
+    # The stats file should be in the parent directory of the 'models' folder
     stats_path = os.path.join(os.path.dirname(model_dir), "vecnormalize.pkl")
     if not os.path.exists(stats_path):
+        # Fallback for older structures
         stats_path = os.path.join(model_dir, "vecnormalize.pkl")
         if not os.path.exists(stats_path):
-            print(f"ERROR: VecNormalize stats file not found.")
+            print(f"ERROR: VecNormalize stats file ('vecnormalize.pkl') not found in the output directory.")
+            print("Please ensure the model was trained with VecNormalize and the stats file is present.")
             sys.exit(1)
 
     print(f"Found VecNormalize stats at: {stats_path}")
 
-    venv = DummyVecEnv([lambda: build_and_setup_env(
+    # Create the environment first to check for mismatches
+    venv_unnormalized = DummyVecEnv([lambda: build_and_setup_env(
         args.env, args.body,
         collect_env_params(args.env, args),
         render_mode="human", args=args
     )])
-    venv = VecNormalize.load(stats_path, venv)
+    
+    # Load the model without an environment to inspect its properties
+    try:
+        temp_model = PPO.load(args.model_path, env=None)
+    except Exception as e:
+        print(f"Error loading model from '{args.model_path}': {e}")
+        sys.exit(1)
+
+    # --- Start: User-friendly Error Check ---
+    env_obs_space = venv_unnormalized.observation_space
+    model_obs_space = temp_model.observation_space
+
+    if env_obs_space.shape != model_obs_space.shape:
+        print("\n" + "!"*80)
+        print("!! MISMATCH ERROR: Observation space shape mismatch detected !!")
+        print(f"The loaded model was trained with an observation shape of {model_obs_space.shape},")
+        print(f"but the environment you are trying to run has a shape of {env_obs_space.shape}.")
+        print("\nThis usually happens when the wrong '--body' is specified for the 'watch' command.")
+        print(f"The current body is '{args.body}'. Please provide the correct body type used during training.")
+        print("Example: --body climbing_profile_chimpanzee")
+        print("!"*80 + "\n")
+        venv_unnormalized.close()
+        sys.exit(1)
+    # --- End: User-friendly Error Check ---
+
+    # If shapes match, proceed to load VecNormalize and the model properly
+    print("Observation spaces match. Loading environment with normalization stats...")
+    venv = VecNormalize.load(stats_path, venv_unnormalized)
     venv.training = False
     venv.norm_reward = False
     print("Successfully loaded and applied VecNormalize stats.")
 
     setup_render_window(venv.envs[0], args)
 
-    print("Loading model...")
+    print("Loading model for playback...")
     model = PPO.load(args.model_path, env=venv)
     print("Model loaded successfully.")
 
@@ -112,6 +143,7 @@ def _watch_sb3(args):
         print(f"Episode finished. Reward: {final_reward:.2f}, Length: {ep_len}")
 
     venv.close()
+
 
 def _watch_rllib(args):
     """Handles watching a Ray RLlib model."""

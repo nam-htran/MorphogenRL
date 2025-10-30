@@ -178,13 +178,23 @@ class ParametricContinuousParkour(gym.Env, EzPickle):
 
     def _generate_agent(self):
         init_x = TERRAIN_STEP*self.TERRAIN_STARTPAD/2
-        spawn_buffer = 0.5 
-        if hasattr(self, 'terrain_ground_y') and len(self.terrain_ground_y) > int(self.TERRAIN_STARTPAD / 2):
-            init_y = self.terrain_ground_y[int(self.TERRAIN_STARTPAD / 2)] + self.agent_body.AGENT_CENTER_HEIGHT + spawn_buffer
+        
+        if self.agent_body.body_type == BodyTypesEnum.CLIMBER:
+            init_y = TERRAIN_HEIGHT + self.ceiling_offset - (self.agent_body.AGENT_HEIGHT / 2)
         else:
-            init_y = TERRAIN_HEIGHT + self.agent_body.AGENT_CENTER_HEIGHT + spawn_buffer
-        self.agent_body.draw(self.world, init_x, init_y, self.np_random.uniform(-INITIAL_RANDOM, INITIAL_RANDOM))
+            spawn_buffer = 0.5 
+            if hasattr(self, 'terrain_ground_y') and len(self.terrain_ground_y) > int(self.TERRAIN_STARTPAD / 2):
+                ground_y = self.terrain_ground_y[int(self.TERRAIN_STARTPAD / 2)]
+            else:
+                ground_y = TERRAIN_HEIGHT
+            init_y = ground_y + self.agent_body.AGENT_CENTER_HEIGHT + spawn_buffer
 
+        self.agent_body.draw(
+            self.world,
+            init_x,
+            init_y,
+            self.np_random.uniform(-INITIAL_RANDOM, INITIAL_RANDOM)
+        )
     def seed(self, seed=None):
         self.np_random, seed = seeding.np_random(seed)
         return [seed]
@@ -247,22 +257,39 @@ class ParametricContinuousParkour(gym.Env, EzPickle):
         self.water_y = self.GROUND_LIMIT; self.nb_steps_outside_water = 0
         self.nb_steps_under_water = 0; self.flipped_counter = 0
         
-        self._generate_terrain(); self._generate_agent()
+        self._generate_terrain()
+        self._generate_agent()
+
         self.drawlist = self.terrain + self.agent_body.get_elements_to_render()
         self.lidar = [LidarCallback(self.agent_body.reference_head_object.fixtures[0].filterData.maskBits) for _ in range(NB_LIDAR)]
+        
         self.prev_pos_x = self.agent_body.reference_head_object.position.x
         
-        WARM_UP_STEPS = 10 
-        for _ in range(WARM_UP_STEPS):
-            self.world.Step(1.0 / FPS, 6 * 30, 2 * 30)
+        actions_to_play = np.array([0] * self.action_space.shape[0])
+        if self.agent_body.body_type == BodyTypesEnum.CLIMBER:
+            y_diff = 0
+            for i in range(len(self.agent_body.sensors)):
+                actions_to_play[len(actions_to_play) - i - 1] = 1
+                sensor = self.agent_body.sensors[len(self.agent_body.sensors) - i - 1]
+                if y_diff == 0:
+                    y_diff = TERRAIN_HEIGHT + self.ceiling_offset - sensor.position[1]
+                sensor.position = (sensor.position[0],
+                                   TERRAIN_HEIGHT + self.ceiling_offset)
 
-        self.critical_contact = False
-        if self.contact_listener: self.contact_listener.Reset()
-        for part in self.agent_body.body_parts:
-            if hasattr(part.userData, 'has_contact'):
-                part.userData.has_contact = False
+            for body_part in self.agent_body.body_parts:
+                body_part.position = (body_part.position[0],
+                                      body_part.position[1] + y_diff)
+
+            for i in range(NB_FIRST_STEPS_HANG):
+                self.step(actions_to_play)
         
-        return self._get_state(), {}
+        initial_state, _, _, _, _ = self.step(actions_to_play)
+        
+        self.nb_steps_outside_water = 0
+        self.nb_steps_under_water = 0
+        self.episodic_reward = 0
+
+        return initial_state, {}
 
     def step(self, action):
         # The step function from before remains correct

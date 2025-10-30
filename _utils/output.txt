@@ -180,7 +180,7 @@ WATCH:
   auto_skip_stuck: true
 
 PPO:
-  enabled: true
+  enabled: false
   run_id: "ppo_reach_the_end_run"
   env: "parkour"
   body: "classic_bipedal"
@@ -209,13 +209,17 @@ ACL:
   run_id: "acl_reach_the_end_run"
   env: "parkour"
   body: "climbing_profile_chimpanzee"
-  total_stages: 200
-  student_steps_per_stage: 100000 
-  eval_episodes: 20
+  total_stages: 2
+  student_steps_per_stage: 128 
+  eval_episodes: 1
   mastery_threshold: 180.0
   difficulty_increment: 0.01
   horizon: 5000
   n_envs: 8 
+
+  creepers_width: 0.5
+  creepers_height: 2.0
+  creepers_spacing: 0.8
   
   ppo_config:
     gamma: 0.999
@@ -264,54 +268,6 @@ MARL:
       
     env_runners:
       rollout_fragment_length: 2048
-
-===== .\output\marl\marl_test_run\rllib_checkpoint.json =====
-{"class_and_ctor_args_file": "class_and_ctor_args.pkl", "state_file": "algorithm_state", "ray_version": "2.50.1", "ray_commit": "7cf6817996f5304b5c808453a997fc1570dcde25", "checkpoint_version": "2.1"}
-
-===== .\output\marl\marl_test_run\env_runner\metadata.json =====
-{"class_and_ctor_args_file": "class_and_ctor_args.pkl", "state_file": "state", "ray_version": "2.50.1", "ray_commit": "7cf6817996f5304b5c808453a997fc1570dcde25", "checkpoint_version": "2.1"}
-
-===== .\output\marl\marl_test_run\env_runner\env_to_module_connector\metadata.json =====
-{"class_and_ctor_args_file": "class_and_ctor_args.pkl", "state_file": "state", "ray_version": "2.50.1", "ray_commit": "7cf6817996f5304b5c808453a997fc1570dcde25", "checkpoint_version": "2.1"}
-
-===== .\output\marl\marl_test_run\env_runner\module_to_env_connector\metadata.json =====
-{"class_and_ctor_args_file": "class_and_ctor_args.pkl", "state_file": "state", "ray_version": "2.50.1", "ray_commit": "7cf6817996f5304b5c808453a997fc1570dcde25", "checkpoint_version": "2.1"}
-
-===== .\output\marl\marl_test_run\learner_group\metadata.json =====
-{"class_and_ctor_args_file": "class_and_ctor_args.pkl", "state_file": "state", "ray_version": "2.50.1", "ray_commit": "7cf6817996f5304b5c808453a997fc1570dcde25", "checkpoint_version": "2.1"}
-
-===== .\output\marl\marl_test_run\learner_group\learner\metadata.json =====
-{"class_and_ctor_args_file": "class_and_ctor_args.pkl", "state_file": "state", "ray_version": "2.50.1", "ray_commit": "7cf6817996f5304b5c808453a997fc1570dcde25", "checkpoint_version": "2.1"}
-
-===== .\output\marl\marl_test_run\learner_group\learner\rl_module\metadata.json =====
-{"class_and_ctor_args_file": "class_and_ctor_args.pkl", "state_file": "module_state", "ray_version": "2.50.1", "ray_commit": "7cf6817996f5304b5c808453a997fc1570dcde25", "checkpoint_version": "2.1"}
-
-===== .\output\marl\marl_test_run\learner_group\learner\rl_module\shared_policy\metadata.json =====
-{"class_and_ctor_args_file": "class_and_ctor_args.pkl", "state_file": "module_state", "ray_version": "2.50.1", "ray_commit": "7cf6817996f5304b5c808453a997fc1570dcde25", "checkpoint_version": "2.1"}
-
-===== .\output\marl\test_suite_marl\rllib_checkpoint.json =====
-{"class_and_ctor_args_file": "class_and_ctor_args.pkl", "state_file": "algorithm_state", "ray_version": "2.50.1", "ray_commit": "7cf6817996f5304b5c808453a997fc1570dcde25", "checkpoint_version": "2.1"}
-
-===== .\output\marl\test_suite_marl\env_runner\metadata.json =====
-{"class_and_ctor_args_file": "class_and_ctor_args.pkl", "state_file": "state", "ray_version": "2.50.1", "ray_commit": "7cf6817996f5304b5c808453a997fc1570dcde25", "checkpoint_version": "2.1"}
-
-===== .\output\marl\test_suite_marl\env_runner\env_to_module_connector\metadata.json =====
-{"class_and_ctor_args_file": "class_and_ctor_args.pkl", "state_file": "state", "ray_version": "2.50.1", "ray_commit": "7cf6817996f5304b5c808453a997fc1570dcde25", "checkpoint_version": "2.1"}
-
-===== .\output\marl\test_suite_marl\env_runner\module_to_env_connector\metadata.json =====
-{"class_and_ctor_args_file": "class_and_ctor_args.pkl", "state_file": "state", "ray_version": "2.50.1", "ray_commit": "7cf6817996f5304b5c808453a997fc1570dcde25", "checkpoint_version": "2.1"}
-
-===== .\output\marl\test_suite_marl\learner_group\metadata.json =====
-{"class_and_ctor_args_file": "class_and_ctor_args.pkl", "state_file": "state", "ray_version": "2.50.1", "ray_commit": "7cf6817996f5304b5c808453a997fc1570dcde25", "checkpoint_version": "2.1"}
-
-===== .\output\marl\test_suite_marl\learner_group\learner\metadata.json =====
-{"class_and_ctor_args_file": "class_and_ctor_args.pkl", "state_file": "state", "ray_version": "2.50.1", "ray_commit": "7cf6817996f5304b5c808453a997fc1570dcde25", "checkpoint_version": "2.1"}
-
-===== .\output\marl\test_suite_marl\learner_group\learner\rl_module\metadata.json =====
-{"class_and_ctor_args_file": "class_and_ctor_args.pkl", "state_file": "module_state", "ray_version": "2.50.1", "ray_commit": "7cf6817996f5304b5c808453a997fc1570dcde25", "checkpoint_version": "2.1"}
-
-===== .\output\marl\test_suite_marl\learner_group\learner\rl_module\shared_policy\metadata.json =====
-{"class_and_ctor_args_file": "class_and_ctor_args.pkl", "state_file": "module_state", "ray_version": "2.50.1", "ray_commit": "7cf6817996f5304b5c808453a997fc1570dcde25", "checkpoint_version": "2.1"}
 
 ===== .\preprocessing\convert_weight.py =====
 import tensorflow as tf
@@ -1219,9 +1175,8 @@ import numpy as np
 import gymnasium as gym
 from stable_baselines3 import PPO
 from stable_baselines3.common.env_util import make_vec_env
-# START FIX: Thêm import typing cho type hint
+from stable_baselines3.common.vec_env import VecNormalize
 from typing import Callable, Union
-# END FIX
 
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
@@ -1238,7 +1193,6 @@ PARAM_SPACE_LIMS = np.array([
 
 EASY_PARAMS = np.array([0.0, 0.0, 0.0, 0.0])
 
-# START FIX: Sao chép các hàm xử lý schedule từ train_ppo.py
 def get_linear_schedule(initial_value: float) -> Callable[[float], float]:
     """Returns a linear schedule function for learning rate."""
     def func(progress_remaining: float) -> float:
@@ -1255,7 +1209,6 @@ def parse_schedule(config_value: Union[dict, float, str]):
         else:
             raise ValueError(f"Unknown schedule type: {schedule_type}")
     return float(config_value)
-# END FIX
 
 def add_acl_args(parser: argparse.ArgumentParser) -> argparse.ArgumentParser:
     parser = add_common_args(parser)
@@ -1280,37 +1233,48 @@ def sample_task_params(difficulty_ratio: float) -> dict:
     sampled = np.random.uniform(low=low_bounds, high=current_max)
     return {"input_vector": sampled[:3], "water_level": sampled[3]}
 
-def evaluate_student(student_model: PPO, env_id: str, body_type: str, difficulty_ratio: float, num_episodes: int, args: argparse.Namespace, render_mode: str = None) -> float:
+def evaluate_student(student_model: PPO, env_id: str, body_type: str, difficulty_ratio: float, num_episodes: int, args: argparse.Namespace, render_mode: str = None, stats_path: str = None) -> float:
     total_rewards = 0.0
-    eval_env = None
+    vec_eval_env = None
     try:
-        initial_task = sample_task_params(difficulty_ratio)
-        eval_env = build_and_setup_env(env_id, body_type, initial_task, render_mode=render_mode, args=args)
-        if render_mode == "human":
-            setup_render_window(eval_env, args)
+        def make_eval_env():
+            task = sample_task_params(difficulty_ratio)
+            env = build_and_setup_env(env_id, body_type, task, render_mode=render_mode, args=args)
+            if render_mode == "human":
+                setup_render_window(env, args)
+            return env
+
+        vec_eval_env = make_vec_env(make_eval_env, n_envs=1)
+        if stats_path and os.path.exists(stats_path):
+            vec_eval_env = VecNormalize.load(stats_path, vec_eval_env)
+            vec_eval_env.training = False
+            vec_eval_env.norm_reward = False
+        
         for i in range(num_episodes):
             print(f"  Evaluating Episode {i + 1}/{num_episodes}...")
             if i > 0:
                 task = sample_task_params(difficulty_ratio)
-                eval_env.unwrapped.set_environment(**task)
-            obs, _ = eval_env.reset()
-            terminated, truncated = False, False
+                vec_eval_env.env_method("set_environment", **task)
+
+            obs = vec_eval_env.reset()
+            done = False
             episode_reward = 0.0
-            while not (terminated or truncated):
+            while not done:
                 if render_mode == "human":
-                    eval_env.render()
-                    if eval_env.unwrapped.viewer and eval_env.unwrapped.viewer.window.has_exit:
+                    vec_eval_env.render()
+                    if vec_eval_env.envs[0].unwrapped.viewer and vec_eval_env.envs[0].unwrapped.viewer.window.has_exit:
                         print("Window closed. Evaluation stopped.")
                         return -np.inf
+
                 action, _ = student_model.predict(obs, deterministic=True)
-                obs, reward, terminated, truncated, _ = eval_env.step(action)
-                episode_reward += reward
+                obs, reward, done_vec, info = vec_eval_env.step(action)
+                done = done_vec[0]
+                episode_reward += info[0].get('episode', {}).get('r', 0)
             total_rewards += episode_reward
     finally:
-        if eval_env:
-            eval_env.close()
-    if 'eval_env' in locals() and render_mode == "human" and (not eval_env.unwrapped.viewer or not eval_env.unwrapped.viewer.window or eval_env.unwrapped.viewer.window.has_exit):
-        return -np.inf
+        if vec_eval_env:
+            vec_eval_env.close()
+
     return total_rewards / num_episodes
 
 def main(args: argparse.Namespace) -> str:
@@ -1321,6 +1285,7 @@ def main(args: argparse.Namespace) -> str:
     output_base = f"output/acl/{args.run_id}"
     model_dir = os.path.join(output_base, "models")
     log_dir = os.path.join(output_base, "logs")
+    stats_path = os.path.join(output_base, "vecnormalize.pkl")
     os.makedirs(model_dir, exist_ok=True)
     os.makedirs(log_dir, exist_ok=True)
 
@@ -1331,30 +1296,29 @@ def main(args: argparse.Namespace) -> str:
     
     print("--- Initializing Student (PPO) ---")
     initial_params = sample_task_params(0.0)
-    
     initial_n_envs = 1 if args.render else args.n_envs
     
-    initial_vec_env = make_vec_env(
+    vec_env = make_vec_env(
         lambda: build_and_setup_env(args.env, args.body, initial_params, args=args),
         n_envs=initial_n_envs,
         seed=getattr(args, 'seed', None)
     )
+    vec_env = VecNormalize(vec_env, norm_obs=True, norm_reward=True, clip_obs=10.)
 
     ppo_kwargs = getattr(args, 'ppo_config', {})
     
-    # START FIX: Xử lý các giá trị schedule trước khi truyền vào PPO
     if 'learning_rate_schedule' in ppo_kwargs:
         ppo_kwargs['learning_rate'] = parse_schedule(ppo_kwargs.pop('learning_rate_schedule'))
     if 'clip_range_schedule' in ppo_kwargs:
         ppo_kwargs['clip_range'] = parse_schedule(ppo_kwargs.pop('clip_range_schedule'))
-    # END FIX
 
     print("Using PPO hyperparameters for student:", ppo_kwargs)
     
-    student = PPO("MlpPolicy", initial_vec_env, verbose=0, tensorboard_log=os.path.join(log_dir, "student"), **ppo_kwargs)
+    student = PPO("MlpPolicy", vec_env, verbose=0, tensorboard_log=os.path.join(log_dir, "student"), **ppo_kwargs)
     
     difficulty_ratio = 0.0
     print(f"\n--- Starting ACL training over {args.total_stages} stages ---")
+    final_path = os.path.join(model_dir, "student_final.zip")
 
     try:
         for stage in range(1, args.total_stages + 1):
@@ -1363,18 +1327,16 @@ def main(args: argparse.Namespace) -> str:
             print(f"\n--- Stage {stage}/{args.total_stages} | Difficulty: {difficulty_ratio:.3f} ---")
             print(f"Task parameters: {task_params}")
 
-            env_fn = lambda: build_and_setup_env(args.env, args.body, task_params, render_mode=render_mode, args=args)
-            n_envs = 1 if args.render else args.n_envs
-            vec_env = make_vec_env(env_fn, n_envs=n_envs, seed=getattr(args, 'seed', None))
-            if render_mode == "human":
-                render_env = vec_env.envs[0]
-                setup_render_window(render_env, args)
+            student.get_env().env_method("set_environment", **task_params)
+            student.get_env().reset()
 
-            student.set_env(vec_env)
             student.learn(total_timesteps=args.student_steps_per_stage, reset_num_timesteps=False, progress_bar=True)
             
+            # Save stats before evaluation
+            student.get_env().save(stats_path)
+            
             print(f"Evaluating agent over {args.eval_episodes} episodes...")
-            avg_reward = evaluate_student(student, args.env, args.body, difficulty_ratio, args.eval_episodes, args, render_mode=render_mode)
+            avg_reward = evaluate_student(student, args.env, args.body, difficulty_ratio, args.eval_episodes, args, render_mode=render_mode, stats_path=stats_path)
             
             print(f"Average reward = {avg_reward:.2f}")
             if avg_reward > args.mastery_threshold:
@@ -1395,10 +1357,11 @@ def main(args: argparse.Namespace) -> str:
     except KeyboardInterrupt:
         print("\nTraining interrupted by user.")
     finally:
-        if student and student.get_env() is not None:
+        if student and student.get_env():
+            student.get_env().save(stats_path)
+            print(f"VecNormalize stats saved to: {stats_path}")
             student.get_env().close()
 
-    final_path = os.path.join(model_dir, "student_final.zip")
     student.save(final_path)
 
     print(f"\n{'=' * 60}\nACL training complete.")
@@ -1757,28 +1720,59 @@ def _watch_sb3(args):
         sys.exit(1)
 
     model_dir = os.path.dirname(args.model_path)
+    # The stats file should be in the parent directory of the 'models' folder
     stats_path = os.path.join(os.path.dirname(model_dir), "vecnormalize.pkl")
     if not os.path.exists(stats_path):
+        # Fallback for older structures
         stats_path = os.path.join(model_dir, "vecnormalize.pkl")
         if not os.path.exists(stats_path):
-            print(f"ERROR: VecNormalize stats file not found.")
+            print(f"ERROR: VecNormalize stats file ('vecnormalize.pkl') not found in the output directory.")
+            print("Please ensure the model was trained with VecNormalize and the stats file is present.")
             sys.exit(1)
 
     print(f"Found VecNormalize stats at: {stats_path}")
 
-    venv = DummyVecEnv([lambda: build_and_setup_env(
+    # Create the environment first to check for mismatches
+    venv_unnormalized = DummyVecEnv([lambda: build_and_setup_env(
         args.env, args.body,
         collect_env_params(args.env, args),
         render_mode="human", args=args
     )])
-    venv = VecNormalize.load(stats_path, venv)
+    
+    # Load the model without an environment to inspect its properties
+    try:
+        temp_model = PPO.load(args.model_path, env=None)
+    except Exception as e:
+        print(f"Error loading model from '{args.model_path}': {e}")
+        sys.exit(1)
+
+    # --- Start: User-friendly Error Check ---
+    env_obs_space = venv_unnormalized.observation_space
+    model_obs_space = temp_model.observation_space
+
+    if env_obs_space.shape != model_obs_space.shape:
+        print("\n" + "!"*80)
+        print("!! MISMATCH ERROR: Observation space shape mismatch detected !!")
+        print(f"The loaded model was trained with an observation shape of {model_obs_space.shape},")
+        print(f"but the environment you are trying to run has a shape of {env_obs_space.shape}.")
+        print("\nThis usually happens when the wrong '--body' is specified for the 'watch' command.")
+        print(f"The current body is '{args.body}'. Please provide the correct body type used during training.")
+        print("Example: --body climbing_profile_chimpanzee")
+        print("!"*80 + "\n")
+        venv_unnormalized.close()
+        sys.exit(1)
+    # --- End: User-friendly Error Check ---
+
+    # If shapes match, proceed to load VecNormalize and the model properly
+    print("Observation spaces match. Loading environment with normalization stats...")
+    venv = VecNormalize.load(stats_path, venv_unnormalized)
     venv.training = False
     venv.norm_reward = False
     print("Successfully loaded and applied VecNormalize stats.")
 
     setup_render_window(venv.envs[0], args)
 
-    print("Loading model...")
+    print("Loading model for playback...")
     model = PPO.load(args.model_path, env=venv)
     print("Model loaded successfully.")
 
@@ -1815,6 +1809,7 @@ def _watch_sb3(args):
         print(f"Episode finished. Reward: {final_reward:.2f}, Length: {ep_len}")
 
     venv.close()
+
 
 def _watch_rllib(args):
     """Handles watching a Ray RLlib model."""
@@ -7210,126 +7205,42 @@ def add_render_args(parser):
         main_pipeline.yaml
     output/
         acl/
-            acl_chimpanzee_test/
+            acl_reach_the_end_run/
+                vecnormalize.pkl
                 logs/
                     student/
                         PPO_0/
-                            events.out.tfevents.1761744230.HoangNam.25452.0
+                            events.out.tfevents.1761801503.HoangNam.27824.0
+                            events.out.tfevents.1761801876.HoangNam.24704.0
+                            events.out.tfevents.1761802034.HoangNam.1520.0
+                            events.out.tfevents.1761802066.HoangNam.1520.1
                 models/
                     student_final.zip
-            test_suite_acl/
-                logs/
-                    student/
-                        PPO_0/
-                            events.out.tfevents.1761745455.HoangNam.16164.1
-                            events.out.tfevents.1761745475.HoangNam.16164.2
-                            events.out.tfevents.1761745657.HoangNam.13220.1
-                            events.out.tfevents.1761745675.HoangNam.13220.2
-                            events.out.tfevents.1761746654.HoangNam.13672.1
-                            events.out.tfevents.1761746674.HoangNam.13672.2
-                            events.out.tfevents.1761747276.HoangNam.25616.1
-                            events.out.tfevents.1761747294.HoangNam.25616.2
-                            events.out.tfevents.1761747423.HoangNam.25084.1
-                            events.out.tfevents.1761747441.HoangNam.25084.2
-                            events.out.tfevents.1761747563.HoangNam.2848.1
-                            events.out.tfevents.1761747580.HoangNam.2848.2
-                            events.out.tfevents.1761748149.HoangNam.7672.1
-                            events.out.tfevents.1761748176.HoangNam.7672.2
-                models/
-                    student_final.zip
-        marl/
-            marl_test_run/
-                algorithm_state.pkl
-                class_and_ctor_args.pkl
-                rllib_checkpoint.json
-                env_runner/
-                    class_and_ctor_args.pkl
-                    metadata.json
-                    state.pkl
-                    env_to_module_connector/
-                        class_and_ctor_args.pkl
-                        metadata.json
-                        state.pkl
-                    module_to_env_connector/
-                        class_and_ctor_args.pkl
-                        metadata.json
-                        state.pkl
-                learner_group/
-                    class_and_ctor_args.pkl
-                    metadata.json
-                    state.pkl
-                    learner/
-                        class_and_ctor_args.pkl
-                        metadata.json
-                        state.pkl
-                        rl_module/
-                            class_and_ctor_args.pkl
-                            metadata.json
-                            module_state.pkl
-                            shared_policy/
-                                class_and_ctor_args.pkl
-                                metadata.json
-                                module_state.pkl
-            test_suite_marl/
-                algorithm_state.pkl
-                class_and_ctor_args.pkl
-                rllib_checkpoint.json
-                env_runner/
-                    class_and_ctor_args.pkl
-                    metadata.json
-                    state.pkl
-                    env_to_module_connector/
-                        class_and_ctor_args.pkl
-                        metadata.json
-                        state.pkl
-                    module_to_env_connector/
-                        class_and_ctor_args.pkl
-                        metadata.json
-                        state.pkl
-                learner_group/
-                    class_and_ctor_args.pkl
-                    metadata.json
-                    state.pkl
-                    learner/
-                        class_and_ctor_args.pkl
-                        metadata.json
-                        state.pkl
-                        rl_module/
-                            class_and_ctor_args.pkl
-                            metadata.json
-                            module_state.pkl
-                            shared_policy/
-                                class_and_ctor_args.pkl
-                                metadata.json
-                                module_state.pkl
         ppo/
+            ppo_reach_the_end_run/
+                vecnormalize.pkl
+                logs/
+                    PPO_1/
+                        events.out.tfevents.1761750368.c2e14c926e43.1076.0
+                models/
+                    ppo_model_1000000_steps.zip
+                    ppo_model_1250000_steps.zip
+                    ppo_model_1500000_steps.zip
+                    ppo_model_1750000_steps.zip
+                    ppo_model_2000000_steps.zip
+                    ppo_model_2250000_steps.zip
+                    ppo_model_2500000_steps.zip
+                    ppo_model_250000_steps.zip
+                    ppo_model_2750000_steps.zip
+                    ppo_model_3000000_steps.zip
+                    ppo_model_500000_steps.zip
+                    ppo_model_750000_steps.zip
+                    ppo_model_final.zip
             test_suite_ppo/
                 vecnormalize.pkl
                 logs/
                     PPO_1/
-                        events.out.tfevents.1761744772.HoangNam.24204.0
-                    PPO_10/
-                        events.out.tfevents.1761747408.HoangNam.25084.0
-                    PPO_11/
-                        events.out.tfevents.1761747546.HoangNam.2848.0
-                    PPO_12/
-                        events.out.tfevents.1761748134.HoangNam.7672.0
-                    PPO_2/
-                        events.out.tfevents.1761744980.HoangNam.8904.0
-                    PPO_3/
-                        events.out.tfevents.1761745059.HoangNam.11060.0
-                    PPO_4/
-                        events.out.tfevents.1761745135.HoangNam.26488.0
-                    PPO_5/
-                        events.out.tfevents.1761745233.HoangNam.27568.0
-                    PPO_6/
-                        events.out.tfevents.1761745438.HoangNam.16164.0
-                    PPO_7/
-                        events.out.tfevents.1761745638.HoangNam.13220.0
-                    PPO_8/
-                        events.out.tfevents.1761746641.HoangNam.13672.0
-                    PPO_9/
-                        events.out.tfevents.1761747259.HoangNam.25616.0
+                        events.out.tfevents.1761800570.HoangNam.10916.0
                 models/
                     ppo_model_1024_steps.zip
                     ppo_model_1280_steps.zip

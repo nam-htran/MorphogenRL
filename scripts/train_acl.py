@@ -7,9 +7,8 @@ import numpy as np
 import gymnasium as gym
 from stable_baselines3 import PPO
 from stable_baselines3.common.env_util import make_vec_env
-# START FIX: Thêm import typing cho type hint
+from stable_baselines3.common.vec_env import VecNormalize
 from typing import Callable, Union
-# END FIX
 
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
@@ -26,7 +25,6 @@ PARAM_SPACE_LIMS = np.array([
 
 EASY_PARAMS = np.array([0.0, 0.0, 0.0, 0.0])
 
-# START FIX: Sao chép các hàm xử lý schedule từ train_ppo.py
 def get_linear_schedule(initial_value: float) -> Callable[[float], float]:
     """Returns a linear schedule function for learning rate."""
     def func(progress_remaining: float) -> float:
@@ -43,7 +41,6 @@ def parse_schedule(config_value: Union[dict, float, str]):
         else:
             raise ValueError(f"Unknown schedule type: {schedule_type}")
     return float(config_value)
-# END FIX
 
 def add_acl_args(parser: argparse.ArgumentParser) -> argparse.ArgumentParser:
     parser = add_common_args(parser)
@@ -68,37 +65,48 @@ def sample_task_params(difficulty_ratio: float) -> dict:
     sampled = np.random.uniform(low=low_bounds, high=current_max)
     return {"input_vector": sampled[:3], "water_level": sampled[3]}
 
-def evaluate_student(student_model: PPO, env_id: str, body_type: str, difficulty_ratio: float, num_episodes: int, args: argparse.Namespace, render_mode: str = None) -> float:
+def evaluate_student(student_model: PPO, env_id: str, body_type: str, difficulty_ratio: float, num_episodes: int, args: argparse.Namespace, render_mode: str = None, stats_path: str = None) -> float:
     total_rewards = 0.0
-    eval_env = None
+    vec_eval_env = None
     try:
-        initial_task = sample_task_params(difficulty_ratio)
-        eval_env = build_and_setup_env(env_id, body_type, initial_task, render_mode=render_mode, args=args)
-        if render_mode == "human":
-            setup_render_window(eval_env, args)
+        def make_eval_env():
+            task = sample_task_params(difficulty_ratio)
+            env = build_and_setup_env(env_id, body_type, task, render_mode=render_mode, args=args)
+            if render_mode == "human":
+                setup_render_window(env, args)
+            return env
+
+        vec_eval_env = make_vec_env(make_eval_env, n_envs=1)
+        if stats_path and os.path.exists(stats_path):
+            vec_eval_env = VecNormalize.load(stats_path, vec_eval_env)
+            vec_eval_env.training = False
+            vec_eval_env.norm_reward = False
+        
         for i in range(num_episodes):
             print(f"  Evaluating Episode {i + 1}/{num_episodes}...")
             if i > 0:
                 task = sample_task_params(difficulty_ratio)
-                eval_env.unwrapped.set_environment(**task)
-            obs, _ = eval_env.reset()
-            terminated, truncated = False, False
+                vec_eval_env.env_method("set_environment", **task)
+
+            obs = vec_eval_env.reset()
+            done = False
             episode_reward = 0.0
-            while not (terminated or truncated):
+            while not done:
                 if render_mode == "human":
-                    eval_env.render()
-                    if eval_env.unwrapped.viewer and eval_env.unwrapped.viewer.window.has_exit:
+                    vec_eval_env.render()
+                    if vec_eval_env.envs[0].unwrapped.viewer and vec_eval_env.envs[0].unwrapped.viewer.window.has_exit:
                         print("Window closed. Evaluation stopped.")
                         return -np.inf
+
                 action, _ = student_model.predict(obs, deterministic=True)
-                obs, reward, terminated, truncated, _ = eval_env.step(action)
-                episode_reward += reward
+                obs, reward, done_vec, info = vec_eval_env.step(action)
+                done = done_vec[0]
+                episode_reward += info[0].get('episode', {}).get('r', 0)
             total_rewards += episode_reward
     finally:
-        if eval_env:
-            eval_env.close()
-    if 'eval_env' in locals() and render_mode == "human" and (not eval_env.unwrapped.viewer or not eval_env.unwrapped.viewer.window or eval_env.unwrapped.viewer.window.has_exit):
-        return -np.inf
+        if vec_eval_env:
+            vec_eval_env.close()
+
     return total_rewards / num_episodes
 
 def main(args: argparse.Namespace) -> str:
@@ -109,6 +117,7 @@ def main(args: argparse.Namespace) -> str:
     output_base = f"output/acl/{args.run_id}"
     model_dir = os.path.join(output_base, "models")
     log_dir = os.path.join(output_base, "logs")
+    stats_path = os.path.join(output_base, "vecnormalize.pkl")
     os.makedirs(model_dir, exist_ok=True)
     os.makedirs(log_dir, exist_ok=True)
 
@@ -119,30 +128,29 @@ def main(args: argparse.Namespace) -> str:
     
     print("--- Initializing Student (PPO) ---")
     initial_params = sample_task_params(0.0)
-    
     initial_n_envs = 1 if args.render else args.n_envs
     
-    initial_vec_env = make_vec_env(
+    vec_env = make_vec_env(
         lambda: build_and_setup_env(args.env, args.body, initial_params, args=args),
         n_envs=initial_n_envs,
         seed=getattr(args, 'seed', None)
     )
+    vec_env = VecNormalize(vec_env, norm_obs=True, norm_reward=True, clip_obs=10.)
 
     ppo_kwargs = getattr(args, 'ppo_config', {})
     
-    # START FIX: Xử lý các giá trị schedule trước khi truyền vào PPO
     if 'learning_rate_schedule' in ppo_kwargs:
         ppo_kwargs['learning_rate'] = parse_schedule(ppo_kwargs.pop('learning_rate_schedule'))
     if 'clip_range_schedule' in ppo_kwargs:
         ppo_kwargs['clip_range'] = parse_schedule(ppo_kwargs.pop('clip_range_schedule'))
-    # END FIX
 
     print("Using PPO hyperparameters for student:", ppo_kwargs)
     
-    student = PPO("MlpPolicy", initial_vec_env, verbose=0, tensorboard_log=os.path.join(log_dir, "student"), **ppo_kwargs)
+    student = PPO("MlpPolicy", vec_env, verbose=0, tensorboard_log=os.path.join(log_dir, "student"), **ppo_kwargs)
     
     difficulty_ratio = 0.0
     print(f"\n--- Starting ACL training over {args.total_stages} stages ---")
+    final_path = os.path.join(model_dir, "student_final.zip")
 
     try:
         for stage in range(1, args.total_stages + 1):
@@ -151,18 +159,16 @@ def main(args: argparse.Namespace) -> str:
             print(f"\n--- Stage {stage}/{args.total_stages} | Difficulty: {difficulty_ratio:.3f} ---")
             print(f"Task parameters: {task_params}")
 
-            env_fn = lambda: build_and_setup_env(args.env, args.body, task_params, render_mode=render_mode, args=args)
-            n_envs = 1 if args.render else args.n_envs
-            vec_env = make_vec_env(env_fn, n_envs=n_envs, seed=getattr(args, 'seed', None))
-            if render_mode == "human":
-                render_env = vec_env.envs[0]
-                setup_render_window(render_env, args)
+            student.get_env().env_method("set_environment", **task_params)
+            student.get_env().reset()
 
-            student.set_env(vec_env)
             student.learn(total_timesteps=args.student_steps_per_stage, reset_num_timesteps=False, progress_bar=True)
             
+            # Save stats before evaluation
+            student.get_env().save(stats_path)
+            
             print(f"Evaluating agent over {args.eval_episodes} episodes...")
-            avg_reward = evaluate_student(student, args.env, args.body, difficulty_ratio, args.eval_episodes, args, render_mode=render_mode)
+            avg_reward = evaluate_student(student, args.env, args.body, difficulty_ratio, args.eval_episodes, args, render_mode=render_mode, stats_path=stats_path)
             
             print(f"Average reward = {avg_reward:.2f}")
             if avg_reward > args.mastery_threshold:
@@ -183,10 +189,11 @@ def main(args: argparse.Namespace) -> str:
     except KeyboardInterrupt:
         print("\nTraining interrupted by user.")
     finally:
-        if student and student.get_env() is not None:
+        if student and student.get_env():
+            student.get_env().save(stats_path)
+            print(f"VecNormalize stats saved to: {stats_path}")
             student.get_env().close()
 
-    final_path = os.path.join(model_dir, "student_final.zip")
     student.save(final_path)
 
     print(f"\n{'=' * 60}\nACL training complete.")

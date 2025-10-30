@@ -9,8 +9,8 @@ PPO:
   env: "parkour"
   body: "classic_bipedal"
   
-  total_timesteps: 3000000 
-  save_freq: 250000
+  total_timesteps: 100000 
+  save_freq: 10000
   n_envs: 16
   horizon: 5000
 
@@ -29,17 +29,21 @@ PPO:
     clip_range: 0.2 
 
 ACL:
-  enabled: false
+  enabled: true
   run_id: "acl_reach_the_end_run"
   env: "parkour"
   body: "climbing_profile_chimpanzee"
-  total_stages: 100
-  student_steps_per_stage: 100000 
-  eval_episodes: 20
+  total_stages: 2
+  student_steps_per_stage: 128 
+  eval_episodes: 1
   mastery_threshold: 180.0
   difficulty_increment: 0.01
   horizon: 5000
   n_envs: 8 
+
+  creepers_width: 0.5
+  creepers_height: 2.0
+  creepers_spacing: 0.8
   
   ppo_config:
     gamma: 0.999
