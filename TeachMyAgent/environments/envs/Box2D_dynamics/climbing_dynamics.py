@@ -81,7 +81,6 @@ class ClimbingContactDetector(contactListener):
     def EndContact(self, contact):
         bodies = [contact.fixtureA.body, contact.fixtureB.body]
         for idx, body in enumerate(bodies):
-            # Safe attribute checks to prevent access violations
             if (hasattr(body, 'userData') and body.userData is not None and
                 hasattr(body.userData, 'object_type') and
                 body.userData.object_type == CustomUserDataObjectTypes.BODY_SENSOR and

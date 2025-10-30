@@ -185,8 +185,8 @@ PPO:
   env: "parkour"
   body: "classic_bipedal"
   
-  total_timesteps: 3000000 
-  save_freq: 250000
+  total_timesteps: 2000000 
+  save_freq: 200000
   n_envs: 16
   horizon: 5000
 
@@ -209,8 +209,8 @@ ACL:
   run_id: "acl_reach_the_end_run"
   env: "parkour"
   body: "climbing_profile_chimpanzee"
-  total_stages: 2
-  student_steps_per_stage: 100000 
+  total_stages: 15
+  student_steps_per_stage: 65536 
   eval_episodes: 1
   mastery_threshold: 180.0
   difficulty_increment: 0.01
@@ -241,7 +241,7 @@ MARL:
   mode: "interactive"
   n_agents: 2
   body: "classic_bipedal"
-  num_workers: 4 
+  num_workers: 8 
   num_gpus: 2
   horizon: 5000
   
@@ -251,7 +251,7 @@ MARL:
   use_cc: true
 
   use_tune: false
-  iterations: 5000
+  iterations: 1000
   
   ppo_config:
     training:
@@ -7217,15 +7217,20 @@ def add_render_args(parser):
                 logs/
                     student/
                         PPO_0/
-                            events.out.tfevents.1761806888.HoangNam.9272.0
-                            events.out.tfevents.1761834441.HoangNam.28484.0
-                            events.out.tfevents.1761834555.HoangNam.6472.0
-                            events.out.tfevents.1761834878.HoangNam.23536.0
-                            events.out.tfevents.1761834962.HoangNam.23536.1
-                            events.out.tfevents.1761835071.HoangNam.23536.2
-                            events.out.tfevents.1761835127.HoangNam.22784.0
+                            events.out.tfevents.1761845475.HoangNam.21200.0
+                            events.out.tfevents.1761845528.HoangNam.21200.1
+                            events.out.tfevents.1761845587.HoangNam.21200.2
+                            events.out.tfevents.1761845652.HoangNam.21200.3
+                            events.out.tfevents.1761845739.HoangNam.21200.4
+                            events.out.tfevents.1761845815.HoangNam.21200.5
+                            events.out.tfevents.1761845874.HoangNam.21200.6
+                            events.out.tfevents.1761845939.HoangNam.21200.7
+                            events.out.tfevents.1761845985.HoangNam.21200.8
+                            events.out.tfevents.1761846035.HoangNam.21200.9
+                            events.out.tfevents.1761846093.HoangNam.21200.10
+                            events.out.tfevents.1761846171.HoangNam.21200.11
+                            events.out.tfevents.1761846263.HoangNam.21200.12
                 models/
-                    student_final.zip
     preprocessing/
         convert_weight.py
         __init__.py
