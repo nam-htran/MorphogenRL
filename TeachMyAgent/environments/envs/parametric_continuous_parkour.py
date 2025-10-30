@@ -257,39 +257,19 @@ class ParametricContinuousParkour(gym.Env, EzPickle):
         self.water_y = self.GROUND_LIMIT; self.nb_steps_outside_water = 0
         self.nb_steps_under_water = 0; self.flipped_counter = 0
         
-        self._generate_terrain()
-        self._generate_agent()
-
+        self._generate_terrain(); self._generate_agent()
         self.drawlist = self.terrain + self.agent_body.get_elements_to_render()
         self.lidar = [LidarCallback(self.agent_body.reference_head_object.fixtures[0].filterData.maskBits) for _ in range(NB_LIDAR)]
-        
         self.prev_pos_x = self.agent_body.reference_head_object.position.x
-        
-        actions_to_play = np.array([0] * self.action_space.shape[0])
-        if self.agent_body.body_type == BodyTypesEnum.CLIMBER:
-            y_diff = 0
-            for i in range(len(self.agent_body.sensors)):
-                actions_to_play[len(actions_to_play) - i - 1] = 1
-                sensor = self.agent_body.sensors[len(self.agent_body.sensors) - i - 1]
-                if y_diff == 0:
-                    y_diff = TERRAIN_HEIGHT + self.ceiling_offset - sensor.position[1]
-                sensor.position = (sensor.position[0],
-                                   TERRAIN_HEIGHT + self.ceiling_offset)
-
-            for body_part in self.agent_body.body_parts:
-                body_part.position = (body_part.position[0],
-                                      body_part.position[1] + y_diff)
-
-            for i in range(NB_FIRST_STEPS_HANG):
-                self.step(actions_to_play)
-        
-        initial_state, _, _, _, _ = self.step(actions_to_play)
-        
-        self.nb_steps_outside_water = 0
-        self.nb_steps_under_water = 0
-        self.episodic_reward = 0
-
-        return initial_state, {}
+        WARM_UP_STEPS = 10 
+        for _ in range(WARM_UP_STEPS):
+            self.world.Step(1.0 / FPS, 6 * 30, 2 * 30)
+        self.critical_contact = False
+        if self.contact_listener: self.contact_listener.Reset()
+        for part in self.agent_body.body_parts:
+            if hasattr(part.userData, 'has_contact'):
+                part.userData.has_contact = False
+        return self._get_state(), {}
 
     def step(self, action):
         # The step function from before remains correct

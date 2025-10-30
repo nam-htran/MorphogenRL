@@ -9,8 +9,8 @@ PPO:
   env: "parkour"
   body: "classic_bipedal"
   
-  total_timesteps: 3000000 
-  save_freq: 250000
+  total_timesteps: 2000000 
+  save_freq: 200000
   n_envs: 16
   horizon: 5000
 
@@ -33,8 +33,8 @@ ACL:
   run_id: "acl_reach_the_end_run"
   env: "parkour"
   body: "climbing_profile_chimpanzee"
-  total_stages: 100
-  student_steps_per_stage: 100000 
+  total_stages: 15
+  student_steps_per_stage: 65536 
   eval_episodes: 1
   mastery_threshold: 180.0
   difficulty_increment: 0.01
@@ -65,7 +65,7 @@ MARL:
   mode: "interactive"
   n_agents: 2
   body: "classic_bipedal"
-  num_workers: 4 
+  num_workers: 8 
   num_gpus: 2
   horizon: 5000
   
@@ -75,7 +75,7 @@ MARL:
   use_cc: true
 
   use_tune: false
-  iterations: 5000
+  iterations: 1000
   
   ppo_config:
     training:

@@ -210,17 +210,17 @@ ACL:
   env: "parkour"
   body: "climbing_profile_chimpanzee"
   total_stages: 2
-  student_steps_per_stage: 128 
+  student_steps_per_stage: 100000 
   eval_episodes: 1
   mastery_threshold: 180.0
   difficulty_increment: 0.01
   horizon: 5000
   n_envs: 8 
-
+  
   creepers_width: 0.5
   creepers_height: 2.0
   creepers_spacing: 0.8
-  
+
   ppo_config:
     gamma: 0.999
     n_steps: 4096
@@ -2579,13 +2579,23 @@ class ParametricContinuousParkour(gym.Env, EzPickle):
 
     def _generate_agent(self):
         init_x = TERRAIN_STEP*self.TERRAIN_STARTPAD/2
-        spawn_buffer = 0.5 
-        if hasattr(self, 'terrain_ground_y') and len(self.terrain_ground_y) > int(self.TERRAIN_STARTPAD / 2):
-            init_y = self.terrain_ground_y[int(self.TERRAIN_STARTPAD / 2)] + self.agent_body.AGENT_CENTER_HEIGHT + spawn_buffer
+        
+        if self.agent_body.body_type == BodyTypesEnum.CLIMBER:
+            init_y = TERRAIN_HEIGHT + self.ceiling_offset - (self.agent_body.AGENT_HEIGHT / 2)
         else:
-            init_y = TERRAIN_HEIGHT + self.agent_body.AGENT_CENTER_HEIGHT + spawn_buffer
-        self.agent_body.draw(self.world, init_x, init_y, self.np_random.uniform(-INITIAL_RANDOM, INITIAL_RANDOM))
+            spawn_buffer = 0.5 
+            if hasattr(self, 'terrain_ground_y') and len(self.terrain_ground_y) > int(self.TERRAIN_STARTPAD / 2):
+                ground_y = self.terrain_ground_y[int(self.TERRAIN_STARTPAD / 2)]
+            else:
+                ground_y = TERRAIN_HEIGHT
+            init_y = ground_y + self.agent_body.AGENT_CENTER_HEIGHT + spawn_buffer
 
+        self.agent_body.draw(
+            self.world,
+            init_x,
+            init_y,
+            self.np_random.uniform(-INITIAL_RANDOM, INITIAL_RANDOM)
+        )
     def seed(self, seed=None):
         self.np_random, seed = seeding.np_random(seed)
         return [seed]
@@ -2652,17 +2662,14 @@ class ParametricContinuousParkour(gym.Env, EzPickle):
         self.drawlist = self.terrain + self.agent_body.get_elements_to_render()
         self.lidar = [LidarCallback(self.agent_body.reference_head_object.fixtures[0].filterData.maskBits) for _ in range(NB_LIDAR)]
         self.prev_pos_x = self.agent_body.reference_head_object.position.x
-        
         WARM_UP_STEPS = 10 
         for _ in range(WARM_UP_STEPS):
             self.world.Step(1.0 / FPS, 6 * 30, 2 * 30)
-
         self.critical_contact = False
         if self.contact_listener: self.contact_listener.Reset()
         for part in self.agent_body.body_parts:
             if hasattr(part.userData, 'has_contact'):
                 part.userData.has_contact = False
-        
         return self._get_state(), {}
 
     def step(self, action):
@@ -7210,71 +7217,15 @@ def add_render_args(parser):
                 logs/
                     student/
                         PPO_0/
-                            events.out.tfevents.1761801503.HoangNam.27824.0
-                            events.out.tfevents.1761801876.HoangNam.24704.0
-                            events.out.tfevents.1761802034.HoangNam.1520.0
-                            events.out.tfevents.1761802066.HoangNam.1520.1
+                            events.out.tfevents.1761806888.HoangNam.9272.0
+                            events.out.tfevents.1761834441.HoangNam.28484.0
+                            events.out.tfevents.1761834555.HoangNam.6472.0
+                            events.out.tfevents.1761834878.HoangNam.23536.0
+                            events.out.tfevents.1761834962.HoangNam.23536.1
+                            events.out.tfevents.1761835071.HoangNam.23536.2
+                            events.out.tfevents.1761835127.HoangNam.22784.0
                 models/
                     student_final.zip
-        ppo/
-            ppo_reach_the_end_run/
-                vecnormalize.pkl
-                logs/
-                    PPO_1/
-                        events.out.tfevents.1761750368.c2e14c926e43.1076.0
-                models/
-                    ppo_model_1000000_steps.zip
-                    ppo_model_1250000_steps.zip
-                    ppo_model_1500000_steps.zip
-                    ppo_model_1750000_steps.zip
-                    ppo_model_2000000_steps.zip
-                    ppo_model_2250000_steps.zip
-                    ppo_model_2500000_steps.zip
-                    ppo_model_250000_steps.zip
-                    ppo_model_2750000_steps.zip
-                    ppo_model_3000000_steps.zip
-                    ppo_model_500000_steps.zip
-                    ppo_model_750000_steps.zip
-                    ppo_model_final.zip
-            test_suite_ppo/
-                vecnormalize.pkl
-                logs/
-                    PPO_1/
-                        events.out.tfevents.1761800570.HoangNam.10916.0
-                models/
-                    ppo_model_1024_steps.zip
-                    ppo_model_1280_steps.zip
-                    ppo_model_1536_steps.zip
-                    ppo_model_1792_steps.zip
-                    ppo_model_2048_steps.zip
-                    ppo_model_2304_steps.zip
-                    ppo_model_2560_steps.zip
-                    ppo_model_256_steps.zip
-                    ppo_model_2816_steps.zip
-                    ppo_model_3072_steps.zip
-                    ppo_model_3328_steps.zip
-                    ppo_model_3584_steps.zip
-                    ppo_model_3840_steps.zip
-                    ppo_model_4096_steps.zip
-                    ppo_model_4352_steps.zip
-                    ppo_model_4608_steps.zip
-                    ppo_model_4864_steps.zip
-                    ppo_model_5120_steps.zip
-                    ppo_model_512_steps.zip
-                    ppo_model_5376_steps.zip
-                    ppo_model_5632_steps.zip
-                    ppo_model_5888_steps.zip
-                    ppo_model_6144_steps.zip
-                    ppo_model_6400_steps.zip
-                    ppo_model_6656_steps.zip
-                    ppo_model_6912_steps.zip
-                    ppo_model_7168_steps.zip
-                    ppo_model_7424_steps.zip
-                    ppo_model_7680_steps.zip
-                    ppo_model_768_steps.zip
-                    ppo_model_7936_steps.zip
-                    ppo_model_8192_steps.zip
-                    ppo_model_final.zip
     preprocessing/
         convert_weight.py
         __init__.py
