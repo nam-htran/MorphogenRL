@@ -4,7 +4,7 @@ WATCH:
   auto_skip_stuck: true
 
 PPO:
-  enabled: true
+  enabled: false
   run_id: "ppo_reach_the_end_run"
   env: "parkour"
   body: "classic_bipedal"
@@ -29,11 +29,11 @@ PPO:
     clip_range: 0.2 
 
 ACL:
-  enabled: true
+  enabled: false
   run_id: "acl_reach_the_end_run"
   env: "parkour"
   body: "climbing_profile_chimpanzee"
-  total_stages: 200
+  total_stages: 100
   student_steps_per_stage: 100000 
   eval_episodes: 20
   mastery_threshold: 180.0

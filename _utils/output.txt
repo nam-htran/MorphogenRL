@@ -205,7 +205,7 @@ PPO:
     clip_range: 0.2 
 
 ACL:
-  enabled: false
+  enabled: true
   run_id: "acl_reach_the_end_run"
   env: "parkour"
   body: "climbing_profile_chimpanzee"
@@ -232,13 +232,13 @@ ACL:
     clip_range: 0.2
 
 MARL:
-  enabled: false
+  enabled: true
   run_id: "marl_reach_the_end_run"
   mode: "interactive"
   n_agents: 2
   body: "classic_bipedal"
   num_workers: 4 
-  num_gpus: 1
+  num_gpus: 2
   horizon: 5000
   
   reward_type: "individual"
@@ -1638,13 +1638,10 @@ def parse_schedule(config_value: Union[dict, float, str]):
     if isinstance(config_value, dict):
         schedule_type = config_value.get("type")
         if schedule_type == "linear":
-            # START FIX: Convert initial_value to float
             initial_val = float(config_value["initial_value"])
             return get_linear_schedule(initial_val)
-            # END FIX
         else:
             raise ValueError(f"Unknown schedule type: {schedule_type}")
-    # If not a dict, it might be a raw number already
     return float(config_value)
 
 def main(args: argparse.Namespace) -> str:
@@ -1717,186 +1714,178 @@ from ray.tune.registry import register_env
 import TeachMyAgent.environments
 import torch
 
-
 from stable_baselines3 import PPO
 from stable_baselines3.common.vec_env import VecNormalize, DummyVecEnv
 
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-# Import các hàm cần thiết từ các script khác
 from utils.env_utils import build_and_setup_env, collect_env_params, setup_render_window
 from utils.shared_args import add_common_args, add_environment_args, add_render_args
-from scripts.train_marl import get_env_creator # Tái sử dụng hàm tạo env của MARL
+from scripts.train_marl import get_env_creator
 
 class UserInterrupt(Exception):
     pass
 
 def add_watch_args(parser: argparse.ArgumentParser) -> argparse.ArgumentParser:
-    """Thêm các đối số cho việc xem lại cả mô hình SB3 và RLlib."""
-    parser.add_argument('--model_path', type=str, required=True, 
-                        help="Đường dẫn đến mô hình đã huấn luyện (.zip cho SB3, thư mục checkpoint cho RLlib).")
-    
+    """Adds arguments for watching both SB3 and RLlib models."""
+    parser.add_argument('--model_path', type=str, required=True,
+                        help="Path to the trained model (.zip for SB3, checkpoint directory for RLlib).")
+
     watch_group = parser.add_argument_group('Playback Parameters')
     watch_group.add_argument('--framework', type=str, default='auto', choices=['auto', 'sb3', 'rllib'],
-                             help="Framework của mô hình. 'auto' sẽ tự nhận diện.")
-    watch_group.add_argument('--num-episodes', type=int, default=10, help="Số tập phim để xem.")
-    watch_group.add_argument('--timeout', type=int, default=5000, help="Số bước tối đa mỗi tập.")
-    watch_group.add_argument('--fast-forward', '-ff', action='store_true', help="Bỏ qua độ trễ giữa các khung hình.")
-    
-    parser = add_common_args(parser) 
+                             help="Model's framework. 'auto' will attempt to autodetect.")
+    watch_group.add_argument('--num-episodes', type=int, default=10, help="Number of episodes to watch.")
+    watch_group.add_argument('--timeout', type=int, default=5000, help="Maximum number of steps per episode.")
+    watch_group.add_argument('--fast-forward', '-ff', action='store_true', help="Skip the delay between frames.")
+
+    parser = add_common_args(parser)
     parser = add_environment_args(parser)
     parser = add_render_args(parser)
 
     rllib_group = parser.add_argument_group('RLlib/MARL Parameters')
-    rllib_group.add_argument('--mode', type=str, default='interactive', choices=['cooperative', 'interactive'], 
-                             help="[RLlib] Chế độ môi trường (cooperative hoặc interactive).")
-    rllib_group.add_argument('--n-agents', type=int, default=2, help="[RLlib] Số lượng agent.")
+    rllib_group.add_argument('--mode', type=str, default='interactive', choices=['cooperative', 'interactive'],
+                             help="[RLlib] Environment mode (cooperative or interactive).")
+    rllib_group.add_argument('--n-agents', type=int, default=2, help="[RLlib] Number of agents.")
 
     return parser
 
 def _watch_sb3(args):
-    """Hàm xử lý việc xem lại mô hình của Stable Baselines 3."""
-    print("--- Chế độ xem lại Stable Baselines 3 (PPO/ACL) ---")
+    """Handles watching a Stable Baselines 3 model."""
+    print("--- Stable Baselines 3 Watch Mode (PPO/ACL) ---")
     if not os.path.exists(args.model_path):
-        print(f"LỖI: Tệp mô hình không tìm thấy tại '{args.model_path}'")
+        print(f"ERROR: Model file not found at '{args.model_path}'")
         sys.exit(1)
 
     model_dir = os.path.dirname(args.model_path)
-    stats_path = os.path.join(os.path.dirname(model_dir), "vecnormalize.pkl") 
-    
+    stats_path = os.path.join(os.path.dirname(model_dir), "vecnormalize.pkl")
     if not os.path.exists(stats_path):
-        print(f"LỖI: Không tìm thấy tệp thống kê VecNormalize tại '{stats_path}'.")
-        sys.exit(1)
-        
-    print(f"Đã tìm thấy thống kê VecNormalize tại: {stats_path}")
+        stats_path = os.path.join(model_dir, "vecnormalize.pkl")
+        if not os.path.exists(stats_path):
+            print(f"ERROR: VecNormalize stats file not found.")
+            sys.exit(1)
+
+    print(f"Found VecNormalize stats at: {stats_path}")
 
     venv = DummyVecEnv([lambda: build_and_setup_env(
-        args.env, args.body, 
-        collect_env_params(args.env, args), 
+        args.env, args.body,
+        collect_env_params(args.env, args),
         render_mode="human", args=args
     )])
     venv = VecNormalize.load(stats_path, venv)
     venv.training = False
     venv.norm_reward = False
-    print("Đã tải và áp dụng thành công thống kê VecNormalize.")
+    print("Successfully loaded and applied VecNormalize stats.")
 
     setup_render_window(venv.envs[0], args)
-    
-    print("Đang tải mô hình...")
+
+    print("Loading model...")
     model = PPO.load(args.model_path, env=venv)
-    print("Tải mô hình thành công.")
-    
+    print("Model loaded successfully.")
+
     for i in range(args.num_episodes):
         obs = venv.reset()
         done = False
         ep_len = 0
         total_reward = 0.0
-        print(f"\n--- Bắt đầu tập phim {i + 1}/{args.num_episodes} ---")
-            
+        print(f"\n--- Starting episode {i + 1}/{args.num_episodes} ---")
+
         while not done:
             action, _ = model.predict(obs, deterministic=True)
             obs, reward, done_vec, infos = venv.step(action)
             venv.render()
 
-            # START FIX: Kiểm tra nếu cửa sổ đã bị đóng
-            # Đối với VecEnv, chúng ta cần truy cập môi trường gốc qua venv.envs[0]
             viewer = venv.envs[0].unwrapped.viewer
             if viewer and viewer.window and viewer.window.has_exit:
-                raise UserInterrupt
-            # END FIX
-            
-            step_reward = infos[0].get('reward', reward[0])
-            total_reward += step_reward
+                raise UserInterrupt("Render window was closed.")
+
+            total_reward += infos[0].get('reward', reward[0])
             is_done = done_vec[0]
             ep_len += 1
 
             if not args.fast_forward:
                 time.sleep(1.0 / 60.0)
-            
+
             if not is_done and ep_len >= args.timeout:
-                 print(f"  -> Đã đạt đến giới hạn timeout ({args.timeout} bước).")
+                 print(f"  -> Timeout reached ({args.timeout} steps).")
                  is_done = True
-            
+
             done = is_done
-        
+
         final_reward = infos[0].get('episode', {}).get('r', total_reward)
-        print(f"Tập phim kết thúc. Phần thưởng: {final_reward:.2f}, Độ dài: {ep_len}")
-    
+        print(f"Episode finished. Reward: {final_reward:.2f}, Length: {ep_len}")
+
     venv.close()
 
 def _watch_rllib(args):
-    """Hàm xử lý việc xem lại mô hình của Ray RLlib."""
-    print("--- Chế độ xem lại Ray RLlib (MARL) ---")
+    """Handles watching a Ray RLlib model."""
+    print("--- Ray RLlib Watch Mode (MARL) ---")
     if not os.path.isdir(args.model_path):
-        print(f"LỖI: Đường dẫn checkpoint '{args.model_path}' không phải là một thư mục.")
+        print(f"ERROR: Checkpoint path '{args.model_path}' is not a directory.")
         sys.exit(1)
 
     env_name = f"marl-{args.mode}-v0"
     env_creator = get_env_creator(args.mode)
     register_env(env_name, env_creator)
-    print(f"Đã đăng ký môi trường tùy chỉnh: '{env_name}'")
-    
-    ray.init(ignore_reinit_error=True)
-    
+    print(f"Registered custom environment: '{env_name}'")
+
+    if not ray.is_initialized():
+        ray.init(ignore_reinit_error=True)
+
     try:
-        print("Đang tải agent từ checkpoint...")
+        print("Loading agent from checkpoint...")
         algo = Algorithm.from_checkpoint(args.model_path)
-        print("Tải agent thành công.")
+        print("Agent loaded successfully.")
     except Exception as e:
-        print(f"Lỗi khi tải checkpoint: {e}")
-        ray.shutdown()
+        print(f"Error loading checkpoint: {e}")
+        if ray.is_initialized():
+            ray.shutdown()
         sys.exit(1)
 
     env_config = {
-        "n_agents": args.n_agents, 
-        "agent_body_type": args.body, 
+        "n_agents": args.n_agents,
+        "agent_body_type": args.body,
         "horizon": args.timeout,
         "render_mode": "human"
     }
-    
+
     env = env_creator(env_config)
-    
-    viewer_env = env.unwrapped
-    while not hasattr(viewer_env, 'viewer'):
-        if hasattr(viewer_env, 'env'):
-             viewer_env = viewer_env.env
-        elif hasattr(viewer_env, 'envs'):
-             viewer_env = viewer_env.envs[0]
-        else:
-             break
-    setup_render_window(viewer_env, args)
+    setup_render_window(env.unwrapped, args)
 
     for i in range(args.num_episodes):
-        print(f"\n--- Bắt đầu tập phim {i + 1}/{args.num_episodes} ---")
-        
+        print(f"\n--- Starting episode {i + 1}/{args.num_episodes} ---")
+
         obs, info = env.reset()
         terminated = {"__all__": False}
         truncated = {"__all__": False}
         ep_len = 0
         total_rewards = {agent_id: 0 for agent_id in env.unwrapped.possible_agents}
+        
+        if not hasattr(algo.config, "policy_mapping_fn"):
+            raise AttributeError("Could not find 'policy_mapping_fn' in the algorithm's config. "
+                                 "Please check train_marl.py.")
+        policy_map_fn = algo.config.policy_mapping_fn
 
         while not terminated["__all__"] and not truncated["__all__"]:
             env.render()
-
-            # START FIX: Kiểm tra nếu cửa sổ đã bị đóng
-            # Cần truy cập vào viewer của môi trường gốc thông qua .unwrapped
+            
             viewer = env.unwrapped.viewer
             if viewer and viewer.window and viewer.window.has_exit:
-                raise UserInterrupt
-            # END FIX
+                raise UserInterrupt("Render window was closed.")
             
             actions = {}
             active_agents = obs.keys()
+
             for agent_id in active_agents:
-                policy_id = algo.config.policy_mapping_fn(agent_id)
+                policy_id = policy_map_fn(agent_id, episode=None)
                 module = algo.get_module(policy_id)
                 obs_tensor = torch.from_numpy(obs[agent_id]).unsqueeze(0)
-                action_params = module.forward_inference({"obs": obs_tensor})['action_dist_inputs']
-                mean, _ = torch.chunk(action_params, 2, dim=1)
-                actions[agent_id] = mean.squeeze(0).detach().cpu().numpy()
+                with torch.no_grad():
+                    action_dist_inputs = module.forward_inference({"obs": obs_tensor})['action_dist_inputs']
+                mean, _ = torch.chunk(action_dist_inputs, 2, dim=-1)
+                actions[agent_id] = mean.squeeze(0).cpu().numpy()
 
             obs, reward, terminated, truncated, info = env.step(actions)
-            
+
             for agent_id, r in reward.items():
                 if agent_id in total_rewards:
                     total_rewards[agent_id] += r
@@ -1905,14 +1894,13 @@ def _watch_rllib(args):
             if not args.fast_forward:
                 time.sleep(1.0 / 60.0)
 
-        print(f"Tập phim kết thúc. Phần thưởng: {total_rewards}, Độ dài: {ep_len}")
+        print(f"Episode finished. Rewards: {total_rewards}, Length: {ep_len}")
 
     env.close()
-    ray.shutdown()
 
 def main(args: argparse.Namespace):
-    """Hàm main hợp nhất, tự động nhận diện framework và gọi hàm tương ứng."""
-    print(f"--- Bắt đầu xem lại mô hình ---\nĐường dẫn: {args.model_path}\n--------------------")
+    """Unified main function, autodetects the framework and calls the corresponding handler."""
+    print(f"--- Starting model playback ---\nPath: {args.model_path}\n--------------------")
 
     framework = args.framework
     if framework == 'auto':
@@ -1921,35 +1909,27 @@ def main(args: argparse.Namespace):
         elif os.path.isfile(args.model_path) and args.model_path.lower().endswith('.zip'):
             framework = 'sb3'
         else:
-            print(f"LỖI: Không thể tự động nhận diện framework từ đường dẫn '{args.model_path}'.")
-            print("Vui lòng chỉ định bằng cờ --framework sb3 hoặc --framework rllib.")
+            print(f"ERROR: Could not autodetect framework from path '{args.model_path}'.")
             sys.exit(1)
-    
+
     try:
         if framework == 'sb3':
             _watch_sb3(args)
         elif framework == 'rllib':
             _watch_rllib(args)
-    except (KeyboardInterrupt, UserInterrupt):
-        # START FIX: Cung cấp thông báo rõ ràng hơn khi cửa sổ bị đóng
-        print("\nViệc xem lại đã bị người dùng dừng lại (đóng cửa sổ hoặc Ctrl+C).")
-        # END FIX
+    except (KeyboardInterrupt, UserInterrupt) as e:
+        print(f"\nPlayback stopped by user: {e}")
     except Exception as e:
-        # START FIX: Xử lý trường hợp cửa sổ đóng gây ra lỗi không mong muốn ở đây
-        if "window" in str(e).lower() or "closed" in str(e).lower():
-             print("\nCửa sổ hiển thị đã đóng.")
-        # END FIX
-        else:
-             print(f"Đã xảy ra lỗi không mong muốn: {e}")
-             import traceback
-             traceback.print_exc()
+        print(f"\nAn unexpected error occurred: {e}")
+        import traceback
+        traceback.print_exc()
     finally:
-        if ray.is_initialized():
+        if __name__ == "__main__" and ray.is_initialized():
             ray.shutdown()
-        print("Đã đóng môi trường và dọn dẹp tài nguyên.")
+        print("Environment closed and resources cleaned up.")
 
 if __name__ == '__main__':
-    parser = argparse.ArgumentParser(description="Xem lại một agent đã được huấn luyện (hỗ trợ SB3 và RLlib).")
+    parser = argparse.ArgumentParser(description="Watch a trained agent (supports SB3 and RLlib).")
     parser = add_watch_args(parser)
     args = parser.parse_args()
     main(args)
@@ -7245,6 +7225,16 @@ def add_render_args(parser):
                             events.out.tfevents.1761745475.HoangNam.16164.2
                             events.out.tfevents.1761745657.HoangNam.13220.1
                             events.out.tfevents.1761745675.HoangNam.13220.2
+                            events.out.tfevents.1761746654.HoangNam.13672.1
+                            events.out.tfevents.1761746674.HoangNam.13672.2
+                            events.out.tfevents.1761747276.HoangNam.25616.1
+                            events.out.tfevents.1761747294.HoangNam.25616.2
+                            events.out.tfevents.1761747423.HoangNam.25084.1
+                            events.out.tfevents.1761747441.HoangNam.25084.2
+                            events.out.tfevents.1761747563.HoangNam.2848.1
+                            events.out.tfevents.1761747580.HoangNam.2848.2
+                            events.out.tfevents.1761748149.HoangNam.7672.1
+                            events.out.tfevents.1761748176.HoangNam.7672.2
                 models/
                     student_final.zip
         marl/
@@ -7318,6 +7308,12 @@ def add_render_args(parser):
                 logs/
                     PPO_1/
                         events.out.tfevents.1761744772.HoangNam.24204.0
+                    PPO_10/
+                        events.out.tfevents.1761747408.HoangNam.25084.0
+                    PPO_11/
+                        events.out.tfevents.1761747546.HoangNam.2848.0
+                    PPO_12/
+                        events.out.tfevents.1761748134.HoangNam.7672.0
                     PPO_2/
                         events.out.tfevents.1761744980.HoangNam.8904.0
                     PPO_3/
@@ -7330,6 +7326,10 @@ def add_render_args(parser):
                         events.out.tfevents.1761745438.HoangNam.16164.0
                     PPO_7/
                         events.out.tfevents.1761745638.HoangNam.13220.0
+                    PPO_8/
+                        events.out.tfevents.1761746641.HoangNam.13672.0
+                    PPO_9/
+                        events.out.tfevents.1761747259.HoangNam.25616.0
                 models/
                     ppo_model_1024_steps.zip
                     ppo_model_1280_steps.zip
