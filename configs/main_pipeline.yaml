@@ -4,7 +4,7 @@ WATCH:
   auto_skip_stuck: true
 
 PPO:
-  enabled: true
+  enabled: false
   run_id: "ppo_reach_the_end_run"
   env: "parkour"
   body: "classic_bipedal"
@@ -33,10 +33,10 @@ ACL:
   run_id: "acl_reach_the_end_run"
   env: "parkour"
   body: "climbing_profile_chimpanzee"
-  student_steps_per_stage: 262144
+  student_steps_per_stage: 1000000  
   total_stages: 50     
   eval_episodes: 10
-  mastery_threshold: 50.0
+  mastery_threshold: 0.0 
   difficulty_increment: 0.01
   horizon: 5000
   n_envs: 8 
@@ -91,4 +91,4 @@ MARL:
       fcnet_activation: "tanh"
       
     env_runners:
-      rollout_fragment_length: 2048
+      rollout_fragment_length: 512 

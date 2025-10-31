@@ -6049,11 +6049,16 @@ class ClimbingContactDetector(contactListener):
                         self.contact_dictionaries[body] = [other_body]
 
     def EndContact(self, contact):
-        bodies = [contact.fixtureA.body, contact.fixtureB.body]
+        fA, fB = contact.fixtureA, contact.fixtureB
+
+        if not (hasattr(fA, 'body') and hasattr(fB, 'body') and fA.body and fB.body and
+                hasattr(fA.body, 'userData') and hasattr(fB.body, 'userData') and
+                fA.body.userData and fB.body.userData):
+            return
+
+        bodies = [fA.body, fB.body]
         for idx, body in enumerate(bodies):
-            if (hasattr(body, 'userData') and body.userData is not None and
-                hasattr(body.userData, 'object_type') and
-                body.userData.object_type == CustomUserDataObjectTypes.BODY_SENSOR and
+            if (body.userData.object_type == CustomUserDataObjectTypes.BODY_SENSOR and
                 body.userData.check_contact and body.userData.has_contact):
 
                 other_body = bodies[(idx + 1) % 2]
@@ -7241,52 +7246,78 @@ def add_render_args(parser):
                 logs/
                     student/
                         PPO_0/
-                            events.out.tfevents.1761845475.HoangNam.21200.0
-                            events.out.tfevents.1761845528.HoangNam.21200.1
-                            events.out.tfevents.1761845587.HoangNam.21200.2
-                            events.out.tfevents.1761845652.HoangNam.21200.3
-                            events.out.tfevents.1761845739.HoangNam.21200.4
-                            events.out.tfevents.1761845815.HoangNam.21200.5
-                            events.out.tfevents.1761845874.HoangNam.21200.6
-                            events.out.tfevents.1761845939.HoangNam.21200.7
-                            events.out.tfevents.1761845985.HoangNam.21200.8
-                            events.out.tfevents.1761846035.HoangNam.21200.9
-                            events.out.tfevents.1761846093.HoangNam.21200.10
-                            events.out.tfevents.1761846171.HoangNam.21200.11
-                            events.out.tfevents.1761846263.HoangNam.21200.12
-                            events.out.tfevents.1761846527.HoangNam.21112.0
-                            events.out.tfevents.1761846574.HoangNam.21112.1
-                            events.out.tfevents.1761846621.HoangNam.21112.2
-                            events.out.tfevents.1761846683.HoangNam.21112.3
-                            events.out.tfevents.1761846728.HoangNam.21112.4
-                            events.out.tfevents.1761846774.HoangNam.21112.5
-                            events.out.tfevents.1761846819.HoangNam.21112.6
-                            events.out.tfevents.1761846867.HoangNam.21112.7
-                            events.out.tfevents.1761846913.HoangNam.21112.8
-                            events.out.tfevents.1761846959.HoangNam.21112.9
-                            events.out.tfevents.1761847003.HoangNam.21112.10
-                            events.out.tfevents.1761847051.HoangNam.21112.11
-                            events.out.tfevents.1761847100.HoangNam.21112.12
-                            events.out.tfevents.1761847148.HoangNam.21112.13
-                            events.out.tfevents.1761847197.HoangNam.21112.14
-                            events.out.tfevents.1761847686.HoangNam.20300.0
-                            events.out.tfevents.1761847843.HoangNam.17124.0
-                            events.out.tfevents.1761847888.HoangNam.17124.1
-                            events.out.tfevents.1761847934.HoangNam.17124.2
-                            events.out.tfevents.1761847981.HoangNam.17124.3
-                            events.out.tfevents.1761848037.HoangNam.17124.4
-                            events.out.tfevents.1761848095.HoangNam.17124.5
-                            events.out.tfevents.1761848142.HoangNam.17124.6
-                            events.out.tfevents.1761848195.HoangNam.17124.7
-                            events.out.tfevents.1761848247.HoangNam.17124.8
-                            events.out.tfevents.1761848293.HoangNam.17124.9
-                            events.out.tfevents.1761848340.HoangNam.17124.10
-                            events.out.tfevents.1761848386.HoangNam.17124.11
-                            events.out.tfevents.1761848432.HoangNam.17124.12
-                            events.out.tfevents.1761848478.HoangNam.17124.13
-                            events.out.tfevents.1761848524.HoangNam.17124.14
+                            events.out.tfevents.1761896808.1fb15d854419.1038.1
+                            events.out.tfevents.1761897099.1fb15d854419.1038.2
+                            events.out.tfevents.1761897394.1fb15d854419.1038.3
+                            events.out.tfevents.1761897691.1fb15d854419.1038.4
+                            events.out.tfevents.1761897987.1fb15d854419.1038.5
+                            events.out.tfevents.1761898285.1fb15d854419.1038.6
+                            events.out.tfevents.1761898582.1fb15d854419.1038.7
+                            events.out.tfevents.1761898881.1fb15d854419.1038.8
+                            events.out.tfevents.1761899178.1fb15d854419.1038.9
+                            events.out.tfevents.1761899476.1fb15d854419.1038.10
+                            events.out.tfevents.1761899773.1fb15d854419.1038.11
+                            events.out.tfevents.1761900072.1fb15d854419.1038.12
+                            events.out.tfevents.1761900371.1fb15d854419.1038.13
+                            events.out.tfevents.1761900672.1fb15d854419.1038.14
+                            events.out.tfevents.1761900975.1fb15d854419.1038.15
+                            events.out.tfevents.1761901281.1fb15d854419.1038.16
+                            events.out.tfevents.1761901599.1fb15d854419.1038.17
+                            events.out.tfevents.1761901905.1fb15d854419.1038.18
+                            events.out.tfevents.1761902211.1fb15d854419.1038.19
+                            events.out.tfevents.1761902518.1fb15d854419.1038.20
+                            events.out.tfevents.1761902822.1fb15d854419.1038.21
+                            events.out.tfevents.1761903126.1fb15d854419.1038.22
+                            events.out.tfevents.1761903440.1fb15d854419.1038.23
+                            events.out.tfevents.1761903748.1fb15d854419.1038.24
+                            events.out.tfevents.1761904081.1fb15d854419.1038.25
+                            events.out.tfevents.1761904422.1fb15d854419.1038.26
+                            events.out.tfevents.1761904726.1fb15d854419.1038.27
+                            events.out.tfevents.1761905029.1fb15d854419.1038.28
+                            events.out.tfevents.1761905331.1fb15d854419.1038.29
+                            events.out.tfevents.1761905636.1fb15d854419.1038.30
+                            events.out.tfevents.1761905942.1fb15d854419.1038.31
+                            events.out.tfevents.1761906246.1fb15d854419.1038.32
+                            events.out.tfevents.1761906549.1fb15d854419.1038.33
+                            events.out.tfevents.1761906855.1fb15d854419.1038.34
+                            events.out.tfevents.1761907160.1fb15d854419.1038.35
+                            events.out.tfevents.1761907463.1fb15d854419.1038.36
+                            events.out.tfevents.1761907767.1fb15d854419.1038.37
+                            events.out.tfevents.1761908068.1fb15d854419.1038.38
+                            events.out.tfevents.1761908370.1fb15d854419.1038.39
+                            events.out.tfevents.1761908673.1fb15d854419.1038.40
+                            events.out.tfevents.1761908976.1fb15d854419.1038.41
+                            events.out.tfevents.1761909279.1fb15d854419.1038.42
+                            events.out.tfevents.1761909582.1fb15d854419.1038.43
+                            events.out.tfevents.1761909885.1fb15d854419.1038.44
+                            events.out.tfevents.1761910188.1fb15d854419.1038.45
+                            events.out.tfevents.1761910488.1fb15d854419.1038.46
+                            events.out.tfevents.1761910792.1fb15d854419.1038.47
+                            events.out.tfevents.1761911095.1fb15d854419.1038.48
+                            events.out.tfevents.1761911397.1fb15d854419.1038.49
+                            events.out.tfevents.1761911701.1fb15d854419.1038.50
                 models/
+                    student_acl_reach_the_end_run_stage_25.zip
+                    student_acl_reach_the_end_run_stage_50.zip
                     student_final.zip
+        ppo/
+            ppo_reach_the_end_run/
+                vecnormalize.pkl
+                logs/
+                    PPO_1/
+                        events.out.tfevents.1761894660.1fb15d854419.1038.0
+                models/
+                    ppo_model_1000000_steps.zip
+                    ppo_model_1200000_steps.zip
+                    ppo_model_1400000_steps.zip
+                    ppo_model_1600000_steps.zip
+                    ppo_model_1800000_steps.zip
+                    ppo_model_2000000_steps.zip
+                    ppo_model_200000_steps.zip
+                    ppo_model_400000_steps.zip
+                    ppo_model_600000_steps.zip
+                    ppo_model_800000_steps.zip
+                    ppo_model_final.zip
     preprocessing/
         convert_weight.py
         __init__.py
