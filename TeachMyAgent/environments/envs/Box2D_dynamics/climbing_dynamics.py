@@ -79,11 +79,16 @@ class ClimbingContactDetector(contactListener):
                         self.contact_dictionaries[body] = [other_body]
 
     def EndContact(self, contact):
-        bodies = [contact.fixtureA.body, contact.fixtureB.body]
+        fA, fB = contact.fixtureA, contact.fixtureB
+
+        if not (hasattr(fA, 'body') and hasattr(fB, 'body') and fA.body and fB.body and
+                hasattr(fA.body, 'userData') and hasattr(fB.body, 'userData') and
+                fA.body.userData and fB.body.userData):
+            return
+
+        bodies = [fA.body, fB.body]
         for idx, body in enumerate(bodies):
-            if (hasattr(body, 'userData') and body.userData is not None and
-                hasattr(body.userData, 'object_type') and
-                body.userData.object_type == CustomUserDataObjectTypes.BODY_SENSOR and
+            if (body.userData.object_type == CustomUserDataObjectTypes.BODY_SENSOR and
                 body.userData.check_contact and body.userData.has_contact):
 
                 other_body = bodies[(idx + 1) % 2]
