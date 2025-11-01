@@ -33,13 +33,13 @@ ACL:
   run_id: "acl_reach_the_end_run"
   env: "parkour"
   body: "climbing_profile_chimpanzee"
-  student_steps_per_stage: 1000000  
-  total_stages: 50     
+  student_steps_per_stage: 400000  
+  total_stages: 10    
   eval_episodes: 10
-  mastery_threshold: 0.0 
-  difficulty_increment: 0.01
+  mastery_threshold: 150.0 
+  difficulty_increment: 0.05 
   horizon: 5000
-  n_envs: 8 
+  n_envs: 16 
   
   creepers_width: 0.5
   creepers_height: 2.0
@@ -65,7 +65,7 @@ MARL:
   mode: "interactive"
   n_agents: 2
   body: "classic_bipedal"
-  num_workers: 8 
+  num_workers: 12 
   num_gpus: 2
   horizon: 5000
   
@@ -75,7 +75,7 @@ MARL:
   use_cc: true
 
   use_tune: false
-  iterations: 1000
+  iterations: 150
   
   ppo_config:
     training:
@@ -84,7 +84,7 @@ MARL:
       lambda_: 0.95
       clip_param: 0.2
       entropy_coeff: 0.01
-      train_batch_size: 4096
+      train_batch_size: 8192
     
     model:
       fcnet_hiddens: [512, 512]
