@@ -36,8 +36,8 @@ ACL:
   student_steps_per_stage: 600000
   total_stages: 10    
   eval_episodes: 10
-  mastery_threshold: 20.0
-  difficulty_increment: 0.02
+  mastery_threshold: -295.0
+  difficulty_increment: 0.05
   horizon: 5000
   n_envs: 16 
   

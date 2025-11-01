@@ -329,7 +329,7 @@ class ParametricContinuousParkour(gym.Env, EzPickle):
         pos = self.agent_body.reference_head_object.position; vel = self.agent_body.reference_head_object.linearVelocity
         self.scroll = [pos[0] - self.rendering_viewer_w / SCALE / 5, pos[1] - self.rendering_viewer_h / SCALE / 2.5]
         
-        shaping = 130 * pos[0] / SCALE; reward = 0
+        shaping = 200 * pos[0] / SCALE; reward = 0
         if self.prev_shaping is not None: reward = shaping - self.prev_shaping
         self.prev_shaping = shaping
         
