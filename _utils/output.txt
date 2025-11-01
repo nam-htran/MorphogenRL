@@ -5973,6 +5973,10 @@ from Box2D.b2 import (edgeShape, circleShape, fixtureDef, polygonShape, revolute
 from TeachMyAgent.environments.envs.utils.custom_user_data import CustomUserDataObjectTypes
 
 class ClimbingDynamics(object):
+    ## <<< SỬA LỖI: Thêm hàm __init__ để tạo danh sách chứa các khớp cần hủy >>>
+    def __init__(self):
+        self.joints_to_destroy = []
+        
     def before_step_climbing_dynamics(self, actions, body, world):
         '''
         Check if sensors should grasp or release.
@@ -5991,12 +5995,20 @@ class ClimbingDynamics(object):
                     joint_to_destroy = next((_joint.joint for _joint in sensor_to_check.joints
                                              if isinstance(_joint.joint, Box2D.b2RevoluteJoint)), None)
                     if joint_to_destroy is not None:
-                        world.DestroyJoint(joint_to_destroy)
+                        ## <<< SỬA LỖI: Trì hoãn việc hủy khớp thay vì hủy ngay lập tức >>>
+                        # Dòng cũ gây lỗi: world.DestroyJoint(joint_to_destroy)
+                        self.joints_to_destroy.append(joint_to_destroy)
 
     def after_step_climbing_dynamics(self, contact_detector, world):
         '''
         Create climbing joints if sensors are still overlapping after Box2D solver execution.
         '''
+        ## <<< SỬA LỖI: Phá hủy các khớp đã được đánh dấu một cách an toàn >>>
+        # Việc này được thực hiện sau world.Step(), nên an toàn.
+        for joint in self.joints_to_destroy:
+            world.DestroyJoint(joint)
+        self.joints_to_destroy.clear() # Dọn dẹp danh sách
+        
         for sensor in contact_detector.contact_dictionaries:
             if len(contact_detector.contact_dictionaries[sensor]) > 0 and \
                     sensor.userData.ready_to_attach and not sensor.userData.has_joint:
@@ -6072,7 +6084,6 @@ class ClimbingContactDetector(contactListener):
 
     def Reset(self):
         self.contact_dictionaries = {}
-
 
 ===== .\TeachMyAgent\environments\envs\Box2D_dynamics\water_dynamics.py =====
 import Box2D

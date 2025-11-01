@@ -18,7 +18,7 @@ from .utils.custom_user_data import CustomUserDataObjectTypes, CustomBodyUserDat
 from TeachMyAgent.environments.envs.bodies.BodiesEnum import BodiesEnum
 from TeachMyAgent.environments.envs.bodies.BodyTypesEnum import BodyTypesEnum
 
-DOOR_BUTTON_X_POS = TERRAIN_STEP * (TERRAIN_LENGTH / 2)
+DOOR_BUTTON_X_POS = TERRAIN_STEP * (TERRAIN_LENGTH / 4)
 DOOR_WIDTH = TERRAIN_STEP * 2
 DOOR_HEIGHT = TERRAIN_HEIGHT / 2
 BUTTON_WIDTH = TERRAIN_STEP
