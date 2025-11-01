@@ -59,25 +59,26 @@ def add_acl_args(parser: argparse.ArgumentParser) -> argparse.ArgumentParser:
     return parser
 
 def sample_task_params(difficulty_ratio: float) -> dict:
-    min_spacing = 0.1
+    min_spacing = 0.05
     max_spacing = 2.0
     current_spacing = min_spacing + difficulty_ratio * (max_spacing - min_spacing)
 
-    max_height = 10.0
-    min_height = 1.5
+    max_height = 10.0 
+    min_height = 1.5 
     current_height = max_height - difficulty_ratio * (max_height - min_height)
-    
+
     low_bounds = EASY_PARAMS
     high_bounds = np.array([lim[1] if p > 0 else lim[0] for p, lim in zip(EASY_PARAMS, PARAM_SPACE_LIMS)])
     current_max = low_bounds + difficulty_ratio * (high_bounds - low_bounds)
-    sampled = np.random.uniform(low=low_bounds, high=current_max)
+    sampled_terrain_params = np.random.uniform(low=low_bounds, high=current_max)
 
-    return {"input_vector": sampled[:3], 
-            "water_level": sampled[3],
-            "creepers_spacing": current_spacing,
-            "creepers_height": current_height,
-            "creepers_width": 0.5
-           }
+    return {
+        "input_vector": sampled_terrain_params[:3],
+        "water_level": sampled_terrain_params[3],
+        "creepers_spacing": current_spacing,
+        "creepers_height": current_height,
+        "creepers_width": 0.5
+    }
 
 def evaluate_student(student_model: PPO, env_id: str, body_type: str, difficulty_ratio: float, num_episodes: int, args: argparse.Namespace, render_mode: str = None, stats_path: str = None) -> float:
     total_rewards = 0.0
