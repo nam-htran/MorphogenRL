@@ -310,6 +310,26 @@ class ParametricContinuousParkour(gym.Env, EzPickle):
         if progress < 0.001 and vel.x < 0.01: reward -= 0.05
         self.prev_pos_x = pos[0]; reward += vel.x * 0.1
         
+        # ==============================================================================
+        # === BẮT ĐẦU ĐOẠN CODE MỚI: THƯỞNG CHO VIỆC BÁM (GRASPING BONUS) ==============
+        # ==============================================================================
+        grasping_bonus = 0.0
+        # Chỉ áp dụng cho các agent có khả năng leo trèo
+        if self.agent_body.body_type == BodyTypesEnum.CLIMBER:
+            num_sensors_touching = 0
+            for sensor in self.agent_body.sensors:
+                # userData.has_contact được cập nhật bởi ClimbingContactDetector
+                if sensor.userData.has_contact:
+                    num_sensors_touching += 1
+            
+            # Thưởng 0.1 cho mỗi cảm biến đang chạm vào bề mặt bám được
+            grasping_bonus = 0.1 * num_sensors_touching
+
+        reward += grasping_bonus
+        # ==============================================================================
+        # === KẾT THÚC ĐOẠN CODE MỚI ===================================================
+        # ==============================================================================
+
         for a in action: reward -= self.agent_body.TORQUE_PENALTY * 80 * np.clip(np.abs(a), 0, 1)
         
         hull = self.agent_body.body_parts[0]
