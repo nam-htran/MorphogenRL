@@ -181,7 +181,10 @@ class ParametricContinuousParkour(gym.Env, EzPickle):
         init_x = TERRAIN_STEP*self.TERRAIN_STARTPAD/2
 
         if self.agent_body.body_type == BodyTypesEnum.CLIMBER:
-            spawn_margin = 1.5  # Safe margin so the agent does not get stuck at the ceiling
+            # === SỬA ĐỔI Ở ĐÂY ===
+            # Đặt agent ngay sát trần nhà để nó có thể bám ngay lập tức trong lúc reset
+            spawn_margin = 0.5  # Giảm margin từ 1.5 xuống 0.5
+            # =====================
             init_y = TERRAIN_HEIGHT + self.ceiling_offset - (self.agent_body.AGENT_HEIGHT / 2) - spawn_margin
         else:
             spawn_buffer = 0.5
@@ -265,9 +268,33 @@ class ParametricContinuousParkour(gym.Env, EzPickle):
         self.lidar = [LidarCallback(self.agent_body.reference_head_object.fixtures[0].filterData.maskBits) for _ in range(NB_LIDAR)]
         self.prev_pos_x = self.agent_body.reference_head_object.position.x
         
-        WARM_UP_STEPS = 10
-        for _ in range(WARM_UP_STEPS):
-            self.world.Step(1.0 / FPS, 6 * 30, 2 * 30)
+        # ==============================================================================
+        # === BẮT ĐẦU ĐOẠN CODE MỚI: WARM-UP ĐỂ BÁM VÀO TRẦN ===========================
+        # ==============================================================================
+        # Logic này chỉ chạy cho agent leo trèo
+        if self.agent_body.body_type == BodyTypesEnum.CLIMBER:
+            # Tạo một hành động "luôn muốn bám"
+            grasp_action = np.ones(self.action_space.shape[0])
+            
+            # Chạy một vài bước mô phỏng để agent tự động bám vào trần/tường
+            for _ in range(50): # Chạy 50 bước là đủ
+                # Kích hoạt hành động bám
+                self.agent_body.activate_motors(grasp_action)
+                self.climbing_dynamics.before_step_climbing_dynamics(grasp_action, self.agent_body, self.world)
+                
+                # Chạy mô phỏng vật lý
+                self.world.Step(1.0 / FPS, 6 * 30, 2 * 30)
+
+                # Tạo khớp nối sau khi mô phỏng
+                self.climbing_dynamics.after_step_climbing_dynamics(self.world.contactListener, self.world)
+        else:
+            # Logic warm-up cũ cho các agent khác
+            WARM_UP_STEPS = 10
+            for _ in range(WARM_UP_STEPS):
+                self.world.Step(1.0 / FPS, 6 * 30, 2 * 30)
+        # ==============================================================================
+        # === KẾT THÚC ĐOẠN CODE MỚI ===================================================
+        # ==============================================================================
 
         self.critical_contact = False
         if self.contact_listener: self.contact_listener.Reset()
