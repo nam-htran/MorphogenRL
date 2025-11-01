@@ -3,7 +3,7 @@ from Box2D.b2 import (edgeShape, circleShape, fixtureDef, polygonShape, revolute
 from TeachMyAgent.environments.envs.utils.custom_user_data import CustomUserDataObjectTypes
 
 class ClimbingDynamics(object):
-    ## <<< SỬA LỖI: Thêm hàm __init__ để tạo danh sách chứa các khớp cần hủy >>>
+    # <<< SỬA LỖI: Thêm hàm __init__ để tạo danh sách chứa các khớp cần hủy >>>
     def __init__(self):
         self.joints_to_destroy = []
         
@@ -65,8 +65,6 @@ class ClimbingDynamics(object):
                     contact_detector.contact_dictionaries[sensor].remove(other_body)
                     if len(contact_detector.contact_dictionaries[sensor]) == 0:
                         sensor.userData.has_contact = False
-
-
 class ClimbingContactDetector(contactListener):
     '''
     Stores contacts between sensors and graspable surfaces.
