@@ -30,13 +30,13 @@ PPO:
 
 ACL:
   enabled: true
-  run_id: "acl_reach_the_end_run"
+  run_id: "acl_climbing_run"
   env: "parkour"
   body: "climbing_profile_chimpanzee"
-  student_steps_per_stage: 600000
-  total_stages: 10    
+  student_steps_per_stage: 200000
+  total_stages: 20    
   eval_episodes: 10
-  mastery_threshold: -295.0
+  mastery_threshold: 50.0
   difficulty_increment: 0.05
   horizon: 5000
   n_envs: 8 
@@ -60,7 +60,7 @@ ACL:
     clip_range: 0.2
 
 MARL:
-  enabled: true
+  enabled: false
   run_id: "marl_reach_the_end_run"
   mode: "interactive"
   n_agents: 2

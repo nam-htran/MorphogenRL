@@ -1,16 +1,17 @@
+# TeachMyAgent/environments/envs/Box2D_dynamics/climbing_dynamics.py
 import Box2D
 from Box2D.b2 import (edgeShape, circleShape, fixtureDef, polygonShape, revoluteJointDef, contactListener)
 from TeachMyAgent.environments.envs.utils.custom_user_data import CustomUserDataObjectTypes
 
 class ClimbingDynamics(object):
-    # <<< SỬA LỖI: Thêm hàm __init__ để tạo danh sách chứa các khớp cần hủy >>>
+    # START FIX: Add __init__ to create a list for joints that need to be destroyed
     def __init__(self):
         self.joints_to_destroy = []
         
     def before_step_climbing_dynamics(self, actions, body, world):
         '''
         Check if sensors should grasp or release.
-        If releasing and a joint exists, destroy it.
+        If releasing and a joint exists, mark it for destruction.
         '''
         for i in range(len(body.sensors)):
             action_to_check = actions[len(actions) - i - 1]
@@ -25,19 +26,21 @@ class ClimbingDynamics(object):
                     joint_to_destroy = next((_joint.joint for _joint in sensor_to_check.joints
                                              if isinstance(_joint.joint, Box2D.b2RevoluteJoint)), None)
                     if joint_to_destroy is not None:
-                        ## <<< SỬA LỖI: Trì hoãn việc hủy khớp thay vì hủy ngay lập tức >>>
-                        # Dòng cũ gây lỗi: world.DestroyJoint(joint_to_destroy)
+                        # START FIX: Defer joint destruction instead of immediate removal
+                        # The old line which caused crashes: world.DestroyJoint(joint_to_destroy)
                         self.joints_to_destroy.append(joint_to_destroy)
+                        # END FIX
 
     def after_step_climbing_dynamics(self, contact_detector, world):
         '''
-        Create climbing joints if sensors are still overlapping after Box2D solver execution.
+        Safely destroy marked joints and create new climbing joints if sensors are still overlapping.
         '''
-        ## <<< SỬA LỖI: Phá hủy các khớp đã được đánh dấu một cách an toàn >>>
-        # Việc này được thực hiện sau world.Step(), nên an toàn.
+        # START FIX: Safely destroy all joints marked for removal after world.Step()
+        # This is the correct and safe way to modify the physics world.
         for joint in self.joints_to_destroy:
             world.DestroyJoint(joint)
-        self.joints_to_destroy.clear() # Dọn dẹp danh sách
+        self.joints_to_destroy.clear() # Clean up the list
+        # END FIX
         
         for sensor in contact_detector.contact_dictionaries:
             if len(contact_detector.contact_dictionaries[sensor]) > 0 and \

@@ -50,8 +50,10 @@ class InteractiveMultiAgentParkour(ParametricContinuousParkour, MultiAgentEnv):
         ParametricContinuousParkour.__init__(self, **parent_config)
         MultiAgentEnv.__init__(self)
         
-        # START FIX: Xóa dòng gây lỗi AttributeError
-        # Dòng 'self.agent_body = self.agent_bodies' đã bị xóa khỏi đây vì nó không chính xác và gây lỗi.
+        # START FIX: Removed line causing AttributeError
+        # The line 'self.agent_body = self.agent_bodies' was here and was incorrect.
+        # It assigned a dictionary to a variable expected to be a single Body object,
+        # breaking parent class methods that rely on self.agent_body.
         # END FIX
         
         self.agent_bodies = {}
@@ -287,9 +289,9 @@ class InteractiveMultiAgentParkour(ParametricContinuousParkour, MultiAgentEnv):
             self.viewer.draw_polygon([(p[0] + self.scroll[0] / 2, p[1]) for p in poly], color=(1, 1, 1))
 
         for obj in self.drawlist:
-            # --- START FIX 2: LOGIC RENDER ĐA TÁC NHÂN ---
+            # START FIX 2: Multi-agent rendering logic
             is_an_agent_head = False
-            # Kiểm tra xem obj có phải là đầu của một trong các agent không
+            # Check if obj is the head of any of the agents
             for agent_id, body in self.agent_bodies.items():
                 if body and obj == body.reference_head_object:
                     is_an_agent_head = True
@@ -299,9 +301,9 @@ class InteractiveMultiAgentParkour(ParametricContinuousParkour, MultiAgentEnv):
             if hasattr(obj.userData, 'object_type') and obj.userData.object_type == CustomUserDataObjectTypes.BODY_SENSOR and hasattr(obj.userData, 'has_joint') and obj.userData.has_joint:
                 color1, color2 = (1.0, 1.0, 0.0), (1.0, 1.0, 0.0)
             elif is_an_agent_head:
-                # Hàm color_agent_head không tồn tại trong lớp này, nên chúng ta không gọi nó
+                # The single-agent color_agent_head function does not exist in this class, so we don't call it.
                 pass
-            # --- END FIX 2 ---
+            # END FIX 2
 
             for f in obj.fixtures:
                 trans = f.body.transform

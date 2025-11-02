@@ -181,10 +181,9 @@ class ParametricContinuousParkour(gym.Env, EzPickle):
         init_x = TERRAIN_STEP*self.TERRAIN_STARTPAD/2
 
         if self.agent_body.body_type == BodyTypesEnum.CLIMBER:
-            # === SỬA ĐỔI Ở ĐÂY ===
-            # Đặt agent ngay sát trần nhà để nó có thể bám ngay lập tức trong lúc reset
-            spawn_margin = 0.5  # Giảm margin từ 1.5 xuống 0.5
-            # =====================
+            # START CHANGE: Spawn climber closer to ceiling to encourage initial grasp
+            spawn_margin = 0.5
+            # END CHANGE
             init_y = TERRAIN_HEIGHT + self.ceiling_offset - (self.agent_body.AGENT_HEIGHT / 2) - spawn_margin
         else:
             spawn_buffer = 0.5
@@ -268,33 +267,25 @@ class ParametricContinuousParkour(gym.Env, EzPickle):
         self.lidar = [LidarCallback(self.agent_body.reference_head_object.fixtures[0].filterData.maskBits) for _ in range(NB_LIDAR)]
         self.prev_pos_x = self.agent_body.reference_head_object.position.x
         
-        # ==============================================================================
-        # === BẮT ĐẦU ĐOẠN CODE MỚI: WARM-UP ĐỂ BÁM VÀO TRẦN ===========================
-        # ==============================================================================
-        # Logic này chỉ chạy cho agent leo trèo
+        # START CHANGE: Improved warm-up logic for climbers to ensure initial grasp
         if self.agent_body.body_type == BodyTypesEnum.CLIMBER:
-            # Tạo một hành động "luôn muốn bám"
+            # A "grasp all" action
             grasp_action = np.ones(self.action_space.shape[0])
             
-            # Chạy một vài bước mô phỏng để agent tự động bám vào trần/tường
-            for _ in range(50): # Chạy 50 bước là đủ
-                # Kích hoạt hành động bám
+            # Run a few simulation steps to let the agent attach to the ceiling/wall
+            for _ in range(50):
                 self.agent_body.activate_motors(grasp_action)
                 self.climbing_dynamics.before_step_climbing_dynamics(grasp_action, self.agent_body, self.world)
                 
-                # Chạy mô phỏng vật lý
                 self.world.Step(1.0 / FPS, 6 * 30, 2 * 30)
 
-                # Tạo khớp nối sau khi mô phỏng
                 self.climbing_dynamics.after_step_climbing_dynamics(self.world.contactListener, self.world)
         else:
-            # Logic warm-up cũ cho các agent khác
+            # Original warm-up for other agents
             WARM_UP_STEPS = 10
             for _ in range(WARM_UP_STEPS):
                 self.world.Step(1.0 / FPS, 6 * 30, 2 * 30)
-        # ==============================================================================
-        # === KẾT THÚC ĐOẠN CODE MỚI ===================================================
-        # ==============================================================================
+        # END CHANGE
 
         self.critical_contact = False
         if self.contact_listener: self.contact_listener.Reset()
@@ -337,25 +328,19 @@ class ParametricContinuousParkour(gym.Env, EzPickle):
         if progress < 0.001 and vel.x < 0.01: reward -= 0.05
         self.prev_pos_x = pos[0]; reward += vel.x * 0.1
         
-        # ==============================================================================
-        # === BẮT ĐẦU ĐOẠN CODE MỚI: THƯỞNG CHO VIỆC BÁM (GRASPING BONUS) ==============
-        # ==============================================================================
+        # START CHANGE: Add grasping bonus for climbers
         grasping_bonus = 0.0
-        # Chỉ áp dụng cho các agent có khả năng leo trèo
         if self.agent_body.body_type == BodyTypesEnum.CLIMBER:
             num_sensors_touching = 0
             for sensor in self.agent_body.sensors:
-                # userData.has_contact được cập nhật bởi ClimbingContactDetector
                 if sensor.userData.has_contact:
                     num_sensors_touching += 1
             
-            # Thưởng 0.1 cho mỗi cảm biến đang chạm vào bề mặt bám được
+            # Reward for each sensor that is currently touching a graspable surface
             grasping_bonus = 0.1 * num_sensors_touching
 
         reward += grasping_bonus
-        # ==============================================================================
-        # === KẾT THÚC ĐOẠN CODE MỚI ===================================================
-        # ==============================================================================
+        # END CHANGE
 
         for a in action: reward -= self.agent_body.TORQUE_PENALTY * 80 * np.clip(np.abs(a), 0, 1)
         

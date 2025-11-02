@@ -1,3 +1,4 @@
+# TeachMyAgent/environments/envs/Box2D_dynamics/water_dynamics.py
 import Box2D
 from Box2D.b2 import (edgeShape, circleShape, fixtureDef, polygonShape, revoluteJointDef, contactListener)
 from copy import copy
@@ -187,13 +188,12 @@ class WaterContactDetector(contactListener):
         '''Safely remove fixture pairs when contact ends.'''
         fA, fB = contact.fixtureA, contact.fixtureB
 
-        # --- START FIX: Thêm kiểm tra an toàn để tránh crash ---
-        # Safety checks to prevent access violations on destroyed objects
+        # START FIX: Added safety checks to prevent crashes from destroyed bodies
         if not (hasattr(fA, 'body') and hasattr(fB, 'body') and fA.body and fB.body and
                 hasattr(fA.body, 'userData') and hasattr(fB.body, 'userData') and
                 fA.body.userData and fB.body.userData):
             return
-        # --- END FIX ---
+        # END FIX
 
         pair_to_remove = None
         if fA.body.userData.object_type == CustomUserDataObjectTypes.WATER and \

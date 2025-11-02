@@ -1,3 +1,4 @@
+# TeachMyAgent/environments/envs/bodies/walkers/old/OldBigQuadruBody.py
 # Taken from https://github.com/flowersteam/teachDeepRL
 
 import numpy as np
@@ -48,8 +49,7 @@ class OldBigQuadruBody(WalkerAbstractBody):
         self.body_parts.append(hull)
         self.reference_head_object = hull
 
-        # ===== START: PHYSICS FIX =====
-        # Using absolute position calculation for better stability
+        # START FIX: Using absolute position calculation for better physics stability
         for x_anchor_rel in [-0.7, 0.5]: # Relative anchor position on the hull
             absolute_x = init_x + np.interp(x_anchor_rel, [-1,1], [-HULL_BOTTOM_WIDTH / 2 / self.SCALE, HULL_BOTTOM_WIDTH / 2 / self.SCALE])
             for i in [-1, +1]:
@@ -70,3 +70,4 @@ class OldBigQuadruBody(WalkerAbstractBody):
                 joint_motor = world.CreateJoint(rjd)
                 joint_motor.userData = CustomMotorUserData(SPEED_KNEE, True, contact_body=lower, angle_correction=1.0)
                 self.motors.append(joint_motor)
+        # END FIX
