@@ -39,7 +39,7 @@ ACL:
   mastery_threshold: -295.0
   difficulty_increment: 0.05
   horizon: 5000
-  n_envs: 16 
+  n_envs: 8 
   
   creepers_width: 0.5
   creepers_height: 2.0
