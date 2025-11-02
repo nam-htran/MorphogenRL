@@ -33,7 +33,7 @@ ACL:
   run_id: "acl_climbing_run_final"
   env: "parkour"
   body: "climbing_profile_chimpanzee"
-  student_steps_per_stage: 150000 
+  student_steps_per_stage: 200000
   total_stages: 40    
   eval_episodes: 10
   mastery_threshold: 0.0
@@ -52,10 +52,10 @@ ACL:
     ent_coef: 0.025
     learning_rate_schedule:
       type: "linear"
-      initial_value: 3e-4
+      initial_value: 1e-4
     vf_coef: 0.5
     max_grad_norm: 0.5
-    n_epochs: 10
+    n_epochs: 20
     batch_size: 128
     gae_lambda: 0.95
     clip_range: 0.2
