@@ -19,15 +19,20 @@ from utils.seeding import set_seed
 
 def ray_init_and_run(func, args):
     """Initializes Ray and runs a function that requires it."""
-    print("Initializing Ray...")
-    ray.init(ignore_reinit_error=True)
+    # START FIX: Ensure Ray is only initialized if not already running
+    if not ray.is_initialized():
+        print("Initializing Ray...")
+        ray.init(ignore_reinit_error=True)
+    # END FIX
     
     try:
         func(args)
     finally:
+        # START FIX: Ensure Ray is always shut down after the task
         if ray.is_initialized():
             ray.shutdown()
             print("Ray has been shut down.")
+        # END FIX
 
 def load_config(config_path: str) -> dict:
     if not os.path.exists(config_path):
@@ -159,14 +164,21 @@ if __name__ == '__main__':
     if hasattr(args, 'seed') and args.seed is not None:
         set_seed(args.seed)
     
-    if args.command in ray_commands:
-        ray_init_and_run(args.func, args)
-    else:
-        if hasattr(args, 'func'):
-            is_no_args_func = 'args' not in args.func.__code__.co_varnames and args.func.__code__.co_argcount == 0
-            if is_no_args_func:
-                 run_task(args.func, None, args.command.upper())
-            else:
-                 run_task(args.func, args, args.command.upper())
+    try:
+        if args.command in ray_commands:
+            ray_init_and_run(args.func, args)
         else:
-            parser.print_help()
+            if hasattr(args, 'func'):
+                is_no_args_func = 'args' not in args.func.__code__.co_varnames and args.func.__code__.co_argcount == 0
+                if is_no_args_func:
+                     run_task(args.func, None, args.command.upper())
+                else:
+                     run_task(args.func, args, args.command.upper())
+            else:
+                parser.print_help()
+    finally:
+        # START FIX: Ensure any remaining Ray context is shut down on exit
+        if ray.is_initialized():
+            ray.shutdown()
+            print("Final Ray shutdown completed.")
+        # END FIX

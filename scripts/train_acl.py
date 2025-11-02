@@ -53,46 +53,46 @@ def add_acl_args(parser: argparse.ArgumentParser) -> argparse.ArgumentParser:
     group.add_argument("--eval_episodes", type=int, default=10, help="Number of evaluation episodes.")
     group.add_argument("--mastery_threshold", type=float, default=150.0, help="Reward threshold to increase difficulty.")
     group.add_argument("--difficulty_increment", type=float, default=0.01, help="Difficulty increase step.")
-    group.add_argument("--render", action="store_true", help="Enable rendering during training and evaluation.")
+    group.add_argument("--render", action='store_true', help="Enable rendering during training and evaluation.")
     group.add_argument("--n_envs", type=int, default=8, help="Number of parallel environments for training.")
     parser.add_argument('--horizon', type=int, default=3000, help="Max steps per episode.")
     return parser
 
 def sample_task_params(difficulty_ratio: float) -> dict:
     """
-    Tạo ra các tham số môi trường dựa trên độ khó hiện tại (difficulty_ratio).
-    Đây là phiên bản được thiết kế lại để dạy agent leo trèo.
+    Generates environment parameters based on the current difficulty_ratio.
+    This version is redesigned to teach a climbing agent.
     """
-    # --- LOGIC CHƯƠNG TRÌNH HỌC MỚI CHO AGENT LEO TRÈO ---
+    # --- NEW CURRICULUM LOGIC FOR CLIMBING AGENT ---
 
-    # 1. Điều chỉnh KHOẢNG CÁCH giữa các "creeper" (cọc bám)
-    #    - Ở độ khó 0.0: Các cọc gần như dính liền vào nhau, tạo thành một "bức tường" dễ bám.
-    #    - Khi độ khó tăng: Khoảng cách tăng dần, buộc agent phải học cách vươn xa hơn.
-    min_spacing = 0.05  # Khoảng cách tối thiểu, rất gần
-    max_spacing = 2.0   # Khoảng cách tối đa ở độ khó cao nhất
+    # 1. Adjust SPACING between creepers
+    #    - At difficulty 0.0: Creepers are almost touching, forming an easy wall.
+    #    - As difficulty increases: Spacing increases, forcing the agent to reach further.
+    min_spacing = 0.05  # Minimal spacing, very close
+    max_spacing = 2.0   # Maximum spacing at highest difficulty
     current_spacing = min_spacing + difficulty_ratio * (max_spacing - min_spacing)
 
-    # 2. Điều chỉnh CHIỀU CAO của các "creeper"
-    #    - Ở độ khó 0.0: Các cọc rất cao, agent khó có thể trượt ra ngoài.
-    #    - Khi độ khó tăng: Chiều cao giảm dần về mức bình thường.
-    max_height = 10.0   # Bắt đầu với chiều cao rất lớn (tạo thành tường)
-    min_height = 1.5    # Chiều cao bình thường ở độ khó cao nhất
+    # 2. Adjust HEIGHT of creepers
+    #    - At difficulty 0.0: Creepers are very tall, making it hard to slip off.
+    #    - As difficulty increases: Height decreases to a normal level.
+    max_height = 10.0   # Start with very tall creepers (like a wall)
+    min_height = 1.5    # Normal height at highest difficulty
     current_height = max_height - difficulty_ratio * (max_height - min_height)
 
-    # 3. Giữ lại logic tạo địa hình ngẫu nhiên từ code gốc
-    #    (Phần này ít quan trọng hơn ở giai đoạn đầu cho agent leo trèo)
+    # 3. Keep the random terrain logic from the original code
+    #    (Less critical for the climbing agent at the beginning)
     low_bounds = EASY_PARAMS
     high_bounds = np.array([lim[1] if p > 0 else lim[0] for p, lim in zip(EASY_PARAMS, PARAM_SPACE_LIMS)])
     current_max = low_bounds + difficulty_ratio * (high_bounds - low_bounds)
     sampled_terrain_params = np.random.uniform(low=low_bounds, high=current_max)
 
-    # 4. Trả về một từ điển chứa tất cả các tham số cho môi trường
+    # 4. Return a dictionary with all parameters for the environment
     return {
         "input_vector": sampled_terrain_params[:3],
         "water_level": sampled_terrain_params[3],
         "creepers_spacing": current_spacing,
         "creepers_height": current_height,
-        "creepers_width": 0.5  # Giữ nguyên độ rộng của cọc
+        "creepers_width": 0.5  # Keep creeper width constant
     }
 
 def evaluate_student(student_model: PPO, env_id: str, body_type: str, difficulty_ratio: float, num_episodes: int, args: argparse.Namespace, render_mode: str = None, stats_path: str = None) -> float:
@@ -176,7 +176,9 @@ def main(args: argparse.Namespace) -> str:
 
     print("Using PPO hyperparameters for student:", ppo_kwargs)
     
-    student = PPO("MlpPolicy", vec_env, verbose=0, tensorboard_log=os.path.join(log_dir, "student"), **ppo_kwargs)
+    # START FIX: Add device="auto" to resolve GPU warnings and improve performance
+    student = PPO("MlpPolicy", vec_env, verbose=0, tensorboard_log=os.path.join(log_dir, "student"), device="auto", **ppo_kwargs)
+    # END FIX
     
     difficulty_ratio = 0.0
     print(f"\n--- Starting ACL training over {args.total_stages} stages ---")

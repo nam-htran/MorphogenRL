@@ -1,3 +1,4 @@
+# TeachMyAgent/environments/envs/bodies/walkers/MillipedeBody.py
 import numpy as np
 from Box2D.b2 import edgeShape, circleShape, fixtureDef, polygonShape, revoluteJointDef, contactListener
 
@@ -57,8 +58,9 @@ class MillipedeBody(WalkerAbstractBody):
         LEG_FD = fixtureDef(shape=polygonShape(box=(self.LEG_W / 2, self.LEG_H / 2)), density=1.0, restitution=0.0, categoryBits=0x20, maskBits=0x000F)
         LOWER_FD = fixtureDef(shape=polygonShape(box=(0.8 * self.LEG_W / 2, self.LEG_H / 2)), density=1.0, restitution=0.0, categoryBits=0x20, maskBits=0x000F)
 
-        # Nâng agent lên một chút
+        # START FIX: Slightly raise the agent to prevent initial ground clipping
         init_y = init_y + 2 / self.SCALE
+        # END FIX
         
         init_x = init_x - MAIN_BODY_BOTTOM_WIDTH / self.SCALE * self.nb_of_bodies / 2
         previous_main_body = None
@@ -71,7 +73,6 @@ class MillipedeBody(WalkerAbstractBody):
             self.body_parts.append(main_body)
 
             for i in [-1, +1]:
-                # ... (code tạo chân giữ nguyên) ...
                 leg = world.CreateDynamicBody(position=(main_body_x, init_y - self.LEG_H / 2 - self.LEG_DOWN), fixtures=LEG_FD)
                 leg.color1, leg.color2 = (0.6 - i / 10., 0.3 - i / 10., 0.5 - i / 10.), (0.4 - i / 10., 0.2 - i / 10., 0.3 - i / 10.)
                 rjd = revoluteJointDef(bodyA=main_body, bodyB=leg, anchor=(main_body_x, init_y - self.LEG_DOWN), enableMotor=True, enableLimit=True, maxMotorTorque=self.MOTORS_TORQUE, motorSpeed=i, lowerAngle=-0.8, upperAngle=1.1)
@@ -89,10 +90,19 @@ class MillipedeBody(WalkerAbstractBody):
                 joint_motor.userData = CustomMotorUserData(SPEED_KNEE, True, contact_body=lower, angle_correction=1.0)
                 self.motors.append(joint_motor)
 
+            # START FIX: Add a flexible joint between body segments to prevent solver instability
             if previous_main_body is not None:
-                # Khớp nối linh hoạt
-                rjd = revoluteJointDef(bodyA=previous_main_body, bodyB=main_body, anchor=(main_body_x - MAIN_BODY_BOTTOM_WIDTH / self.SCALE / 2, init_y), enableMotor=False, enableLimit=True, lowerAngle=-0.2 * np.pi, upperAngle=0.2 * np.pi)
+                rjd = revoluteJointDef(
+                    bodyA=previous_main_body,
+                    bodyB=main_body,
+                    anchor=(main_body_x - MAIN_BODY_BOTTOM_WIDTH / self.SCALE / 2, init_y),
+                    enableMotor=False,
+                    enableLimit=True,
+                    lowerAngle=-0.2 * np.pi,
+                    upperAngle=0.2 * np.pi,
+                )
                 world.CreateJoint(rjd)
+            # END FIX
             previous_main_body = main_body
 
         self.reference_head_object = previous_main_body

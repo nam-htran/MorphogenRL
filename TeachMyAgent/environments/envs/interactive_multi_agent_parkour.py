@@ -50,12 +50,6 @@ class InteractiveMultiAgentParkour(ParametricContinuousParkour, MultiAgentEnv):
         ParametricContinuousParkour.__init__(self, **parent_config)
         MultiAgentEnv.__init__(self)
         
-        # START FIX: Removed line causing AttributeError
-        # The line 'self.agent_body = self.agent_bodies' was here and was incorrect.
-        # It assigned a dictionary to a variable expected to be a single Body object,
-        # breaking parent class methods that rely on self.agent_body.
-        # END FIX
-        
         self.agent_bodies = {}
         self.prev_shapings = {}
         self.possible_agents = [f"agent_{i}" for i in range(self.n_agents)]
@@ -114,6 +108,17 @@ class InteractiveMultiAgentParkour(ParametricContinuousParkour, MultiAgentEnv):
             if body: body.destroy(self.world)
         self.agent_bodies = {}
 
+    # START FIX: Add a safe method to destroy specific agent bodies during simulation
+    def _destroy_agents_in_simulation(self, agent_ids_to_destroy):
+        """Safely destroys the bodies of terminated agents."""
+        if not agent_ids_to_destroy:
+            return
+        for agent_id in agent_ids_to_destroy:
+            if agent_id in self.agent_bodies and self.agent_bodies[agent_id]:
+                self.agent_bodies[agent_id].destroy(self.world)
+                self.agent_bodies[agent_id] = None # Mark as destroyed
+    # END FIX
+
     def _generate_agents(self):
         self._destroy_agents()
         self.agent_bodies = {}
@@ -152,59 +157,60 @@ class InteractiveMultiAgentParkour(ParametricContinuousParkour, MultiAgentEnv):
     def step(self, action_dict):
         self.ts += 1
 
+        # Handle button/door mechanism
         self.button_pressed = False
         if self.button:
             for agent_id in self.agents:
                 body = self.agent_bodies[agent_id]
-                for part in body.body_parts:
-                    for contact in part.contacts:
-                        if contact.other == self.button: self.button_pressed = True; break
-                    if self.button_pressed: break
+                if body: # Check if body exists
+                    for part in body.body_parts:
+                        for contact in part.contacts:
+                            if contact.other == self.button: self.button_pressed = True; break
+                        if self.button_pressed: break
                 if self.button_pressed: break
         
         if self.door_joint: self.door_joint.motorSpeed = 5.0 if self.button_pressed else -5.0
 
+        # Apply actions
         for agent_id, action in action_dict.items():
-            if agent_id in self.agents and action is not None and len(action) > 0:
+            if agent_id in self.agents and self.agent_bodies.get(agent_id) and action is not None and len(action) > 0:
                 self.agent_bodies[agent_id].activate_motors(action)
 
+        # Step physics world
         self.world.Step(1.0 / FPS, 6 * 30, 2 * 30)
+        
         rewards = {}
-        positions = {aid: self.agent_bodies[aid].reference_head_object.position for aid in self.agents if aid in self.agent_bodies}
+        positions = {aid: self.agent_bodies[aid].reference_head_object.position for aid in self.agents if self.agent_bodies.get(aid)}
         if positions:
             leading_agent_pos_x = max(p[0] for p in positions.values()); avg_agent_pos_y = sum(p[1] for p in positions.values()) / len(positions)
             self.scroll = [leading_agent_pos_x - self.rendering_viewer_w / SCALE / 5, avg_agent_pos_y - self.rendering_viewer_h / SCALE / 2.5]
             
+        # START FIX: Improved termination logic for stability
+        agents_terminated_this_step = []
         active_agents_before_step = list(self.agents)
 
-        if self.reward_type == "individual":
-            for agent_id in active_agents_before_step:
-                body = self.agent_bodies[agent_id]; pos = body.reference_head_object.position
-                shaping = 130 * pos[0] / SCALE; reward = 0
-                if self.prev_shapings.get(agent_id) is not None: reward = shaping - self.prev_shapings[agent_id]
-                self.prev_shapings[agent_id] = shaping; reward += 0.01
-                if agent_id in action_dict and action_dict[agent_id] is not None:
-                    for a in action_dict[agent_id]: reward -= body.TORQUE_PENALTY * 20 * np.clip(np.abs(a), 0, 1)
-                rewards[agent_id] = reward
-        elif self.reward_type == "shared":
-            agent_progress = []
-            for agent_id in active_agents_before_step:
-                pos = self.agent_bodies[agent_id].reference_head_object.position
-                shaping = 130 * pos[0] / SCALE; progress = 0
-                if self.prev_shapings.get(agent_id) is not None: progress = shaping - self.prev_shapings[agent_id]
-                self.prev_shapings[agent_id] = shaping; agent_progress.append(progress)
-            shared_reward = min(agent_progress) if agent_progress else 0
-            total_torque_penalty = 0
-            for agent_id in active_agents_before_step:
-                 body = self.agent_bodies[agent_id]
-                 if agent_id in action_dict and action_dict[agent_id] is not None:
-                    for a in action_dict[agent_id]: total_torque_penalty += body.TORQUE_PENALTY * 20 * np.clip(np.abs(a), 0, 1)
-            avg_torque_penalty = total_torque_penalty / len(active_agents_before_step) if active_agents_before_step else 0
-            final_reward = shared_reward - avg_torque_penalty + 0.01
-            for agent_id in active_agents_before_step: rewards[agent_id] = final_reward
-
+        # Calculate rewards and check for termination conditions
         for agent_id in active_agents_before_step:
-            body = self.agent_bodies[agent_id]; pos = body.reference_head_object.position
+            body = self.agent_bodies.get(agent_id)
+            if not body:
+                continue
+
+            # Calculate rewards (individual or shared)
+            if self.reward_type == "individual":
+                pos = body.reference_head_object.position
+                shaping = 130 * pos[0] / SCALE
+                reward = 0
+                if self.prev_shapings.get(agent_id) is not None:
+                    reward = shaping - self.prev_shapings[agent_id]
+                self.prev_shapings[agent_id] = shaping
+                reward += 0.01
+                if agent_id in action_dict and action_dict[agent_id] is not None:
+                    for a in action_dict[agent_id]:
+                        reward -= body.TORQUE_PENALTY * 20 * np.clip(np.abs(a), 0, 1)
+                rewards[agent_id] = reward
+            
+            # Check for individual agent termination
+            pos = body.reference_head_object.position
             agent_critical_contact = False
             for part in body.body_parts:
                  if isinstance(part.userData, CustomBodyUserData) and part.userData.is_contact_critical and part.userData.has_contact:
@@ -213,54 +219,114 @@ class InteractiveMultiAgentParkour(ParametricContinuousParkour, MultiAgentEnv):
                         for contact in part.contacts:
                             if contact.other == self.door: is_door_contact = True; break
                      if not is_door_contact: agent_critical_contact = True; break
+            
             if agent_critical_contact or pos[0] < 0:
-                rewards[agent_id] = -100; self.terminateds[agent_id] = True
-            if pos[0] > (TERRAIN_LENGTH + self.TERRAIN_STARTPAD - TERRAIN_END) * TERRAIN_STEP: self.terminateds[agent_id] = True
+                rewards[agent_id] = -100
+                self.terminateds[agent_id] = True
+            if pos[0] > (TERRAIN_LENGTH + self.TERRAIN_STARTPAD - TERRAIN_END) * TERRAIN_STEP:
+                self.terminateds[agent_id] = True
+            
             if self.terminateds.get(agent_id, False):
-                if agent_id in self.agents: self.agents.remove(agent_id)
+                agents_terminated_this_step.append(agent_id)
+
+        if self.reward_type == "shared":
+            agent_progress = []
+            for agent_id in active_agents_before_step:
+                body = self.agent_bodies.get(agent_id)
+                if body:
+                    pos = body.reference_head_object.position
+                    shaping = 130 * pos[0] / SCALE
+                    progress = 0
+                    if self.prev_shapings.get(agent_id) is not None:
+                        progress = shaping - self.prev_shapings[agent_id]
+                    self.prev_shapings[agent_id] = shaping
+                    agent_progress.append(progress)
+            
+            shared_reward = min(agent_progress) if agent_progress else 0
+            total_torque_penalty = 0
+            for agent_id in active_agents_before_step:
+                 body = self.agent_bodies.get(agent_id)
+                 if body and agent_id in action_dict and action_dict[agent_id] is not None:
+                    for a in action_dict[agent_id]:
+                        total_torque_penalty += body.TORQUE_PENALTY * 20 * np.clip(np.abs(a), 0, 1)
+
+            num_active = len(active_agents_before_step)
+            avg_torque_penalty = total_torque_penalty / num_active if num_active > 0 else 0
+            final_reward = shared_reward - avg_torque_penalty + 0.01
+            for agent_id in active_agents_before_step:
+                rewards[agent_id] = final_reward
         
-        is_truncated = self.ts >= self.horizon; all_done = not self.agents or is_truncated
-        self.terminateds["__all__"] = all_done and not is_truncated; self.truncateds["__all__"] = is_truncated
+        # Safely remove terminated agents from simulation and active list
+        if agents_terminated_this_step:
+            self._destroy_agents_in_simulation(agents_terminated_this_step)
+            for agent_id in agents_terminated_this_step:
+                if agent_id in self.agents:
+                    self.agents.remove(agent_id)
+        
+        is_truncated = self.ts >= self.horizon
+        all_done = not self.agents or is_truncated
+        self.terminateds["__all__"] = all_done and not is_truncated
+        self.truncateds["__all__"] = is_truncated
+        # END FIX
+
         obs = self._get_obs()
         return obs, rewards, self.terminateds, self.truncateds, {}
 
     def _get_obs(self):
-        all_obs = {}; agent_positions = {aid: body.reference_head_object.position for aid, body in self.agent_bodies.items()}
+        all_obs = {}
+        agent_positions = {aid: body.reference_head_object.position for aid, body in self.agent_bodies.items() if body}
+        
         for agent_id in self.agents:
-            body = self.agent_bodies[agent_id]; head = body.reference_head_object
-            vel = head.linearVelocity; my_pos = agent_positions[agent_id]
-            for lidar_callback in self.lidar: lidar_callback.agent_mask_filter = head.fixtures[0].filterData.maskBits
+            body = self.agent_bodies.get(agent_id)
+            if not body: continue # Skip terminated agents
+
+            head = body.reference_head_object
+            vel = head.linearVelocity
+            my_pos = agent_positions[agent_id]
+
+            for lidar_callback in self.lidar:
+                lidar_callback.agent_mask_filter = head.fixtures[0].filterData.maskBits
+
             for i in range(NB_LIDAR):
-                self.lidar[i].fraction = 1.0; self.lidar[i].p1 = head.position
+                self.lidar[i].fraction = 1.0
+                self.lidar[i].p1 = head.position
                 self.lidar[i].p2 = (head.position[0] + math.sin((self.lidar_angle * i / NB_LIDAR) + self.lidar_y_offset) * LIDAR_RANGE,
                                    head.position[1] - math.cos((self.lidar_angle * i / NB_LIDAR) + self.lidar_y_offset) * LIDAR_RANGE)
                 self.world.RayCast(self.lidar[i], self.lidar[i].p1, self.lidar[i].p2)
+
             is_under_water = head.position.y <= self.water_y
             state = [head.angle, 2.0 * head.angularVelocity / FPS, 0.3 * vel.x * (VIEWPORT_W / SCALE) / FPS,
                      0.3 * vel.y * (VIEWPORT_H / SCALE) / FPS, 1.0 if is_under_water else 0.0, 0.0]
             state.extend(body.get_motors_state())
             if body.body_type == BodyTypesEnum.CLIMBER: state.extend(body.get_sensors_state())
+            
             for lidar in self.lidar: state.append(lidar.fraction)
             for lidar in self.lidar:
                 if lidar.is_water_detected: state.append(-1)
                 elif lidar.is_creeper_detected: state.append(1)
                 else: state.append(0)
+            
             original_obs = np.array(state)
             
             other_agents_pos = []
             for other_id in self.possible_agents:
                 if other_id != agent_id:
-                    if other_id in self.agents and other_id in agent_positions:
-                        other_pos = agent_positions[other_id]; relative_pos = (np.array(other_pos) - np.array(my_pos)) / (LIDAR_RANGE * 2)
+                    if other_id in agent_positions: # Check if other agent is still active
+                        other_pos = agent_positions[other_id]
+                        relative_pos = (np.array(other_pos) - np.array(my_pos)) / (LIDAR_RANGE * 2)
                         other_agents_pos.extend(relative_pos.tolist())
-                    else: other_agents_pos.extend([0.0, 0.0])
+                    else:
+                        other_agents_pos.extend([0.0, 0.0])
+
             coop_mechanism_obs = []
             if self.door: coop_mechanism_obs.extend(((np.array(self.door.position) - np.array(my_pos)) / (LIDAR_RANGE*2)).tolist())
             else: coop_mechanism_obs.extend([0.0, 0.0])
             if self.button: coop_mechanism_obs.extend(((np.array(self.button.position) - np.array(my_pos)) / (LIDAR_RANGE*2)).tolist())
             else: coop_mechanism_obs.extend([0.0, 0.0])
+
             final_obs = np.concatenate([original_obs, np.array(other_agents_pos), np.array(coop_mechanism_obs)])
             all_obs[agent_id] = final_obs.astype(np.float32)
+            
         return all_obs
     
     def render(self, draw_lidars=True):
@@ -289,9 +355,11 @@ class InteractiveMultiAgentParkour(ParametricContinuousParkour, MultiAgentEnv):
             self.viewer.draw_polygon([(p[0] + self.scroll[0] / 2, p[1]) for p in poly], color=(1, 1, 1))
 
         for obj in self.drawlist:
-            # START FIX 2: Multi-agent rendering logic
+            # Check if object still exists in the physics world before rendering
+            if not obj or not obj.valid:
+                continue
+
             is_an_agent_head = False
-            # Check if obj is the head of any of the agents
             for agent_id, body in self.agent_bodies.items():
                 if body and obj == body.reference_head_object:
                     is_an_agent_head = True
@@ -301,9 +369,7 @@ class InteractiveMultiAgentParkour(ParametricContinuousParkour, MultiAgentEnv):
             if hasattr(obj.userData, 'object_type') and obj.userData.object_type == CustomUserDataObjectTypes.BODY_SENSOR and hasattr(obj.userData, 'has_joint') and obj.userData.has_joint:
                 color1, color2 = (1.0, 1.0, 0.0), (1.0, 1.0, 0.0)
             elif is_an_agent_head:
-                # The single-agent color_agent_head function does not exist in this class, so we don't call it.
                 pass
-            # END FIX 2
 
             for f in obj.fixtures:
                 trans = f.body.transform

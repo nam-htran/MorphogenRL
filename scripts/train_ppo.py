@@ -77,7 +77,9 @@ def main(args: argparse.Namespace) -> str:
 
     print("Using PPO hyperparameters:", ppo_kwargs)
 
-    model = PPO("MlpPolicy", env, verbose=1, tensorboard_log=os.path.join(output_base_dir, "logs"), **ppo_kwargs)
+    # START FIX: Add device="auto" to resolve GPU warnings and improve performance
+    model = PPO("MlpPolicy", env, verbose=1, tensorboard_log=os.path.join(output_base_dir, "logs"), device="auto", **ppo_kwargs)
+    # END FIX
     
     checkpoint_callback = CheckpointCallback(
         save_freq=max(args.save_freq // args.n_envs, 1),
