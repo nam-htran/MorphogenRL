@@ -33,13 +33,13 @@ ACL:
   run_id: "acl_climbing_run"
   env: "parkour"
   body: "climbing_profile_chimpanzee"
-  student_steps_per_stage: 200000
-  total_stages: 20    
+  student_steps_per_stage: 150000 
+  total_stages: 40     
   eval_episodes: 10
-  mastery_threshold: -50.0 
-  difficulty_increment: 0.05
+  mastery_threshold: 0.0
+  difficulty_increment: 0.025
   horizon: 5000
-  n_envs: 8 
+  n_envs: 16 
   
   creepers_width: 0.5
   creepers_height: 2.0

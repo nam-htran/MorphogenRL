@@ -1,3 +1,4 @@
+# TeachMyAgent/environments/envs/parametric_continuous_parkour.py
 import math
 import os
 
@@ -259,10 +260,8 @@ class ParametricContinuousParkour(gym.Env, EzPickle):
         self.water_y = self.GROUND_LIMIT; self.nb_steps_outside_water = 0
         self.nb_steps_under_water = 0; self.flipped_counter = 0
 
-        # START CHANGE: Add state for stagnation penalty
         self.stagnation_counter = 0
         self.last_progress_x = 0
-        # END CHANGE
 
         self._generate_terrain(); self._generate_agent()
         self.drawlist = self.terrain + self.agent_body.get_elements_to_render()
@@ -286,7 +285,6 @@ class ParametricContinuousParkour(gym.Env, EzPickle):
             if hasattr(part.userData, 'has_contact'):
                 part.userData.has_contact = False
                 
-        # Initialize prev_pos_x here for stagnation check
         self.prev_pos_x = self.agent_body.reference_head_object.position.x
         self.last_progress_x = self.prev_pos_x
         
@@ -318,17 +316,18 @@ class ParametricContinuousParkour(gym.Env, EzPickle):
         vel = self.agent_body.reference_head_object.linearVelocity
         self.scroll = [pos[0] - self.rendering_viewer_w / SCALE / 5, pos[1] - self.rendering_viewer_h / SCALE / 2.5]
         
-        # --- REWARD SHAPING REVISION ---
+        # --- REWARD SHAPING REVISION V2 ---
         reward = 0
         
         # 1. Primary Reward: Progress
-        shaping = 130 * pos[0] / SCALE  # Scaled reward for x-position
+        shaping = 130 * pos[0] / SCALE 
         if self.prev_shaping is not None:
             reward += shaping - self.prev_shaping
         self.prev_shaping = shaping
         
-        # 2. Velocity Reward: Encourage forward movement
-        reward += 0.1 * vel.x
+        # START CHANGE: Heavily incentivize forward velocity
+        reward += 0.3 * vel.x
+        # END CHANGE
 
         # 3. Grasping Bonus for climbers
         if self.agent_body.body_type == BodyTypesEnum.CLIMBER:
@@ -336,22 +335,24 @@ class ParametricContinuousParkour(gym.Env, EzPickle):
             for sensor in self.agent_body.sensors:
                 if sensor.userData.has_contact:
                     num_sensors_touching += 1
-            reward += 0.02 * num_sensors_touching # Reduced bonus to avoid exploitation
+            reward += 0.02 * num_sensors_touching 
 
-        # 4. Stagnation Penalty: Punish for not moving
+        # 4. Stagnation Penalty
         if abs(pos.x - self.last_progress_x) < 0.01:
             self.stagnation_counter += 1
         else:
             self.stagnation_counter = 0
             self.last_progress_x = pos.x
         
-        if self.stagnation_counter > 100: # After ~2 seconds of no progress
+        if self.stagnation_counter > 100:
             reward -= 0.1
-        # --- END REWARD SHAPING REVISION ---
+        # --- END REWARD SHAPING REVISION V2 ---
 
         # Penalties
+        # START CHANGE: Reduce torque penalty to encourage more powerful movements
         for a in action:
-            reward -= self.agent_body.TORQUE_PENALTY * 80 * np.clip(np.abs(a), 0, 1)
+            reward -= self.agent_body.TORQUE_PENALTY * 40 * np.clip(np.abs(a), 0, 1)
+        # END CHANGE
         
         hull = self.agent_body.body_parts[0]
         if hasattr(hull.userData, 'has_contact') and hull.userData.has_contact and self.agent_body.body_type == BodyTypesEnum.WALKER:
