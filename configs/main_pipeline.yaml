@@ -30,16 +30,17 @@ PPO:
 
 ACL:
   enabled: true
-  run_id: "acl_climbing_run"
+  run_id: "acl_climbing_run_final"
   env: "parkour"
   body: "climbing_profile_chimpanzee"
   student_steps_per_stage: 150000 
-  total_stages: 40     
+  total_stages: 40    
   eval_episodes: 10
   mastery_threshold: 0.0
   difficulty_increment: 0.025
   horizon: 5000
-  n_envs: 16 
+  n_envs: 16
+  seed: 42
   
   creepers_width: 0.5
   creepers_height: 2.0

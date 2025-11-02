@@ -19,20 +19,16 @@ from utils.seeding import set_seed
 
 def ray_init_and_run(func, args):
     """Initializes Ray and runs a function that requires it."""
-    # START FIX: Ensure Ray is only initialized if not already running
     if not ray.is_initialized():
         print("Initializing Ray...")
         ray.init(ignore_reinit_error=True)
-    # END FIX
     
     try:
         func(args)
     finally:
-        # START FIX: Ensure Ray is always shut down after the task
         if ray.is_initialized():
             ray.shutdown()
             print("Ray has been shut down.")
-        # END FIX
 
 def load_config(config_path: str) -> dict:
     if not os.path.exists(config_path):
@@ -121,7 +117,7 @@ if __name__ == '__main__':
     pipeline_parser.add_argument('--width', type=int, help="Override window width for watching.")
     pipeline_parser.add_argument('--height', type=int, help="Override window height for watching.")
     pipeline_parser.add_argument('--fullscreen', action='store_true', help="Override fullscreen for watching.")
-    pipeline_parser.add_argument('--seed', type=int, default=None, help="Global seed for reproducibility.")
+    pipeline_parser.add_argument('--seed', type=int, default=None, help="Global seed for reproducibility. Overrides YAML config.")
     pipeline_parser.set_defaults(func=run_pipeline)
 
     train_parser = subparsers.add_parser('train', help="Train a specific algorithm.")
@@ -161,8 +157,29 @@ if __name__ == '__main__':
 
     args = parser.parse_args()
     
-    if hasattr(args, 'seed') and args.seed is not None:
-        set_seed(args.seed)
+    # START CHANGE: Smart seed handling
+    # Priority: Command line > YAML config > No seed
+    seed = args.seed
+    if args.command == 'pipeline' and seed is None:
+        try:
+            config = load_config(args.config)
+            for stage_name in ['PPO', 'ACL', 'MARL']:
+                stage_config = config.get(stage_name, {})
+                if stage_config.get('enabled', False):
+                    seed_from_config = stage_config.get('seed')
+                    if seed_from_config is not None:
+                        print(f"INFO: Using seed '{seed_from_config}' from '{stage_name}' configuration in '{args.config}'.")
+                        seed = seed_from_config
+                        break # Use the first one found
+        except Exception as e:
+            print(f"WARNING: Could not load config to check for seed. Reason: {e}")
+    
+    if seed is not None:
+        print(f"INFO: Setting global seed to {seed}.")
+        set_seed(seed)
+        # Ensure the args object carries the definitive seed value
+        args.seed = seed
+    # END CHANGE
     
     try:
         if args.command in ray_commands:
@@ -177,8 +194,6 @@ if __name__ == '__main__':
             else:
                 parser.print_help()
     finally:
-        # START FIX: Ensure any remaining Ray context is shut down on exit
         if ray.is_initialized():
             ray.shutdown()
             print("Final Ray shutdown completed.")
-        # END FIX
