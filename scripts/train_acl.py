@@ -60,39 +60,47 @@ def add_acl_args(parser: argparse.ArgumentParser) -> argparse.ArgumentParser:
 
 def sample_task_params(difficulty_ratio: float) -> dict:
     """
-    Generates environment parameters based on the current difficulty_ratio.
-    This version is redesigned to teach a climbing agent.
+    Generates environment parameters based on a two-stage curriculum.
+    Stage 1 (diff < 0.5): Focus on increasing spacing (learning to reach).
+    Stage 2 (diff >= 0.5): Focus on decreasing height (learning precision grasp).
     """
-    # --- NEW CURRICULUM LOGIC FOR CLIMBING AGENT ---
+    # --- STAGE-BASED CURRICULUM LOGIC ---
 
-    # 1. Adjust SPACING between creepers
-    #    - At difficulty 0.0: Creepers are almost touching, forming an easy wall.
-    #    - As difficulty increases: Spacing increases, forcing the agent to reach further.
     min_spacing = 0.05  # Minimal spacing, very close
     max_spacing = 2.0   # Maximum spacing at highest difficulty
-    current_spacing = min_spacing + difficulty_ratio * (max_spacing - min_spacing)
-
-    # 2. Adjust HEIGHT of creepers
-    #    - At difficulty 0.0: Creepers are very tall, making it hard to slip off.
-    #    - As difficulty increases: Height decreases to a normal level.
-    max_height = 10.0   # Start with very tall creepers (like a wall)
+    
+    max_height = 10.0   # Start with very tall creepers (easy to grasp)
     min_height = 1.5    # Normal height at highest difficulty
-    current_height = max_height - difficulty_ratio * (max_height - min_height)
 
-    # 3. Keep the random terrain logic from the original code
-    #    (Less critical for the climbing agent at the beginning)
+    # START CHANGE: Implement two-stage curriculum
+    if difficulty_ratio < 0.5:
+        # --- Stage 1: Learn to Reach ---
+        # Map difficulty [0, 0.5) to spacing [min, max]
+        # Height remains at its easiest setting.
+        stage_1_progress = difficulty_ratio * 2 
+        current_spacing = min_spacing + stage_1_progress * (max_spacing - min_spacing)
+        current_height = max_height
+    else:
+        # --- Stage 2: Learn Precision Grasping ---
+        # Map difficulty [0.5, 1.0] to height [max, min]
+        # Spacing is now fixed at its hardest setting.
+        stage_2_progress = (difficulty_ratio - 0.5) * 2
+        current_spacing = max_spacing
+        current_height = max_height - stage_2_progress * (max_height - min_height)
+    # END CHANGE
+
+    # Keep the random terrain generation, but scale it with overall difficulty
     low_bounds = EASY_PARAMS
     high_bounds = np.array([lim[1] if p > 0 else lim[0] for p, lim in zip(EASY_PARAMS, PARAM_SPACE_LIMS)])
     current_max = low_bounds + difficulty_ratio * (high_bounds - low_bounds)
     sampled_terrain_params = np.random.uniform(low=low_bounds, high=current_max)
 
-    # 4. Return a dictionary with all parameters for the environment
     return {
         "input_vector": sampled_terrain_params[:3],
         "water_level": sampled_terrain_params[3],
         "creepers_spacing": current_spacing,
         "creepers_height": current_height,
-        "creepers_width": 0.5  # Keep creeper width constant
+        "creepers_width": 0.5
     }
 
 def evaluate_student(student_model: PPO, env_id: str, body_type: str, difficulty_ratio: float, num_episodes: int, args: argparse.Namespace, render_mode: str = None, stats_path: str = None) -> float:
@@ -176,9 +184,7 @@ def main(args: argparse.Namespace) -> str:
 
     print("Using PPO hyperparameters for student:", ppo_kwargs)
     
-    # START FIX: Add device="auto" to resolve GPU warnings and improve performance
     student = PPO("MlpPolicy", vec_env, verbose=0, tensorboard_log=os.path.join(log_dir, "student"), device="auto", **ppo_kwargs)
-    # END FIX
     
     difficulty_ratio = 0.0
     print(f"\n--- Starting ACL training over {args.total_stages} stages ---")
@@ -196,7 +202,6 @@ def main(args: argparse.Namespace) -> str:
 
             student.learn(total_timesteps=args.student_steps_per_stage, reset_num_timesteps=False, progress_bar=True)
             
-            # Save stats before evaluation
             student.get_env().save(stats_path)
             
             print(f"Evaluating agent over {args.eval_episodes} episodes...")
