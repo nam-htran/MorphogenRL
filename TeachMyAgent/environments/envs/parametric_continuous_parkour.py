@@ -1,4 +1,3 @@
-# TeachMyAgent/environments/envs/parametric_continuous_parkour.py
 import math
 import os
 
@@ -181,9 +180,7 @@ class ParametricContinuousParkour(gym.Env, EzPickle):
         init_x = TERRAIN_STEP*self.TERRAIN_STARTPAD/2
 
         if self.agent_body.body_type == BodyTypesEnum.CLIMBER:
-            # START CHANGE: Spawn climber closer to ceiling to encourage initial grasp
             spawn_margin = 0.5
-            # END CHANGE
             init_y = TERRAIN_HEIGHT + self.ceiling_offset - (self.agent_body.AGENT_HEIGHT / 2) - spawn_margin
         else:
             spawn_buffer = 0.5
@@ -262,30 +259,26 @@ class ParametricContinuousParkour(gym.Env, EzPickle):
         self.water_y = self.GROUND_LIMIT; self.nb_steps_outside_water = 0
         self.nb_steps_under_water = 0; self.flipped_counter = 0
 
+        # START CHANGE: Add state for stagnation penalty
+        self.stagnation_counter = 0
+        self.last_progress_x = 0
+        # END CHANGE
+
         self._generate_terrain(); self._generate_agent()
         self.drawlist = self.terrain + self.agent_body.get_elements_to_render()
         self.lidar = [LidarCallback(self.agent_body.reference_head_object.fixtures[0].filterData.maskBits) for _ in range(NB_LIDAR)]
-        self.prev_pos_x = self.agent_body.reference_head_object.position.x
         
-        # START CHANGE: Improved warm-up logic for climbers to ensure initial grasp
         if self.agent_body.body_type == BodyTypesEnum.CLIMBER:
-            # A "grasp all" action
             grasp_action = np.ones(self.action_space.shape[0])
-            
-            # Run a few simulation steps to let the agent attach to the ceiling/wall
             for _ in range(50):
                 self.agent_body.activate_motors(grasp_action)
                 self.climbing_dynamics.before_step_climbing_dynamics(grasp_action, self.agent_body, self.world)
-                
                 self.world.Step(1.0 / FPS, 6 * 30, 2 * 30)
-
                 self.climbing_dynamics.after_step_climbing_dynamics(self.world.contactListener, self.world)
         else:
-            # Original warm-up for other agents
             WARM_UP_STEPS = 10
             for _ in range(WARM_UP_STEPS):
                 self.world.Step(1.0 / FPS, 6 * 30, 2 * 30)
-        # END CHANGE
 
         self.critical_contact = False
         if self.contact_listener: self.contact_listener.Reset()
@@ -293,6 +286,10 @@ class ParametricContinuousParkour(gym.Env, EzPickle):
             if hasattr(part.userData, 'has_contact'):
                 part.userData.has_contact = False
                 
+        # Initialize prev_pos_x here for stagnation check
+        self.prev_pos_x = self.agent_body.reference_head_object.position.x
+        self.last_progress_x = self.prev_pos_x
+        
         return self._get_state(), {}
 
     def step(self, action):
@@ -317,37 +314,50 @@ class ParametricContinuousParkour(gym.Env, EzPickle):
         self.water_dynamics.calculate_forces(self.world.contactListener.fixture_pairs)
         
         state = self._get_state()
-        pos = self.agent_body.reference_head_object.position; vel = self.agent_body.reference_head_object.linearVelocity
+        pos = self.agent_body.reference_head_object.position
+        vel = self.agent_body.reference_head_object.linearVelocity
         self.scroll = [pos[0] - self.rendering_viewer_w / SCALE / 5, pos[1] - self.rendering_viewer_h / SCALE / 2.5]
         
-        shaping = 200 * pos[0] / SCALE; reward = 0
-        if self.prev_shaping is not None: reward = shaping - self.prev_shaping
+        # --- REWARD SHAPING REVISION ---
+        reward = 0
+        
+        # 1. Primary Reward: Progress
+        shaping = 130 * pos[0] / SCALE  # Scaled reward for x-position
+        if self.prev_shaping is not None:
+            reward += shaping - self.prev_shaping
         self.prev_shaping = shaping
         
-        progress = pos[0] - self.prev_pos_x
-        if progress < 0.001 and vel.x < 0.01: reward -= 0.05
-        self.prev_pos_x = pos[0]; reward += vel.x * 0.1
-        
-        # START CHANGE: Add grasping bonus for climbers
-        grasping_bonus = 0.0
+        # 2. Velocity Reward: Encourage forward movement
+        reward += 0.1 * vel.x
+
+        # 3. Grasping Bonus for climbers
         if self.agent_body.body_type == BodyTypesEnum.CLIMBER:
             num_sensors_touching = 0
             for sensor in self.agent_body.sensors:
                 if sensor.userData.has_contact:
                     num_sensors_touching += 1
-            
-            # Reward for each sensor that is currently touching a graspable surface
-            grasping_bonus = 0.1 * num_sensors_touching
+            reward += 0.02 * num_sensors_touching # Reduced bonus to avoid exploitation
 
-        reward += grasping_bonus
-        # END CHANGE
+        # 4. Stagnation Penalty: Punish for not moving
+        if abs(pos.x - self.last_progress_x) < 0.01:
+            self.stagnation_counter += 1
+        else:
+            self.stagnation_counter = 0
+            self.last_progress_x = pos.x
+        
+        if self.stagnation_counter > 100: # After ~2 seconds of no progress
+            reward -= 0.1
+        # --- END REWARD SHAPING REVISION ---
 
-        for a in action: reward -= self.agent_body.TORQUE_PENALTY * 80 * np.clip(np.abs(a), 0, 1)
+        # Penalties
+        for a in action:
+            reward -= self.agent_body.TORQUE_PENALTY * 80 * np.clip(np.abs(a), 0, 1)
         
         hull = self.agent_body.body_parts[0]
         if hasattr(hull.userData, 'has_contact') and hull.userData.has_contact and self.agent_body.body_type == BodyTypesEnum.WALKER:
             reward -= HULL_CONTACT_PENALTY
         
+        # Termination conditions
         if abs(state[0]) > 1.5: self.flipped_counter += 1
         else: self.flipped_counter = 0
         
