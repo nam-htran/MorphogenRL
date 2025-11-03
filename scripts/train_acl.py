@@ -125,25 +125,28 @@ def main(args: argparse.Namespace) -> str:
             else:
                 print("Creating new VecNormalize stats."); vec_env = VecNormalize(vec_env, norm_obs=True, norm_reward=True, clip_obs=10.)
 
-            # START CHANGE: New, more robust Transfer Learning logic
             pretrained_path = getattr(args, 'pretrained_model_path', None)
             if stage == 1 and pretrained_path and os.path.exists(pretrained_path):
                 print(f"Loading PRE-TRAINED model for first stage from: {pretrained_path}")
-                # 1. Create a new SAC student with the correct environment and hyperparameters
                 student = AGENT_CLASS("MlpPolicy", vec_env, verbose=0, tensorboard_log=os.path.join(log_dir, "student"), device="auto", **agent_kwargs)
-                
-                # 2. Load the PPO model just to get its weights
                 ppo_model = PPO.load(pretrained_path, device="cpu")
-                
                 print("Transferring PPO policy weights to new SAC student...")
-                # 3. Copy the weights from the PPO policy's feature extractor to the SAC policy
-                # This works because both default MlpPolicies have a 'mlp_extractor'
-                student.policy.mlp_extractor.load_state_dict(ppo_model.policy.mlp_extractor.state_dict())
                 
-                # We also transfer the actor's final layer and the critic's layers
+                # START CHANGE: Update weight transfer logic for modern SB3 SACPolicy
+                # The shared network is now called 'features_extractor' and is part of both actor and critic
+                ppo_feature_extractor_weights = ppo_model.policy.mlp_extractor.state_dict()
+                
+                # Copy to SAC's actor and critic feature extractors
+                student.actor.features_extractor.load_state_dict(ppo_feature_extractor_weights)
+                student.critic.features_extractor.load_state_dict(ppo_feature_extractor_weights)
+                
+                # Transfer the final layers as well
                 student.actor.mu.load_state_dict(ppo_model.policy.action_net.state_dict())
+                # For the critics, we initialize both Q-networks with the PPO's value network weights
                 student.critic.qf0.load_state_dict(ppo_model.policy.value_net.state_dict())
-                student.critic.qf1.load_state_dict(ppo_model.policy.value_net.state_dict()) # SAC has two critics, so we copy to both
+                student.critic.qf1.load_state_dict(ppo_model.policy.value_net.state_dict())
+                # END CHANGE
+
                 print("Weight transfer complete.")
 
             elif temp_model_path and os.path.exists(temp_model_path):
@@ -152,7 +155,6 @@ def main(args: argparse.Namespace) -> str:
             else:
                 print("Initializing new SAC model from scratch.")
                 student = AGENT_CLASS("MlpPolicy", vec_env, verbose=0, tensorboard_log=os.path.join(log_dir, "student"), device="auto", **agent_kwargs)
-            # END CHANGE
 
             student.learn(total_timesteps=args.student_steps_per_stage, reset_num_timesteps=False, progress_bar=True)
             student.get_env().save(stats_path)
@@ -179,7 +181,7 @@ def main(args: argparse.Namespace) -> str:
     except KeyboardInterrupt:
         print("\nTraining interrupted by user.")
     finally:
-        if student and student.get_env():
+        if student and hasattr(student, 'env') and student.get_env():
             student.get_env().save(stats_path); print(f"Final VecNormalize stats saved to: {stats_path}")
             student.save(final_path); student.get_env().close()
 
