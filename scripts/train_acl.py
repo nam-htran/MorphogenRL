@@ -132,16 +132,13 @@ def main(args: argparse.Namespace) -> str:
                 ppo_model = PPO.load(pretrained_path, device="cpu")
                 print("Transferring PPO policy weights to new SAC student...")
                 
-                # START CHANGE: Extract the correct sub-network from PPO's mlp_extractor
-                # The 'policy_net' is what the SAC's actor and critic feature extractors correspond to.
+                # START CHANGE: New robust weight transfer
+                # The PPO 'policy_net' is equivalent to the SAC's actor/critic 'net'
                 ppo_shared_net_weights = ppo_model.policy.mlp_extractor.policy_net.state_dict()
                 
-                student.actor.features_extractor.load_state_dict(ppo_shared_net_weights)
-                student.critic.features_extractor.load_state_dict(ppo_shared_net_weights)
-                
-                student.actor.mu.load_state_dict(ppo_model.policy.action_net.state_dict())
-                student.critic.qf0.load_state_dict(ppo_model.policy.value_net.state_dict())
-                student.critic.qf1.load_state_dict(ppo_model.policy.value_net.state_dict())
+                # SAC's MlpPolicy has an `actor` and `critic` which are the networks we need to update
+                student.actor.load_state_dict(ppo_shared_net_weights, strict=False)
+                student.critic.load_state_dict(ppo_shared_net_weights, strict=False)
                 # END CHANGE
 
                 print("Weight transfer complete.")

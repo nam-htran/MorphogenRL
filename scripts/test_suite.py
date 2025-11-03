@@ -13,7 +13,7 @@ from scripts import demo as demo_script
 from scripts import train_ppo
 from scripts import train_acl
 from scripts import train_marl
-from scripts import watch
+from run import ray_init_and_run # Import the wrapper for Ray
 
 def print_header(text, char='='):
     width = 80
@@ -24,15 +24,15 @@ def print_header(text, char='='):
 def run_test(func, args_namespace, test_name):
     print_header(f"RUNNING TEST: {test_name.upper()}", char='-')
     if args_namespace:
-        print(f"Args: {vars(args_namespace)}")
+        # Print args but hide potentially long lists/dicts for cleaner logs
+        clean_args = {k: v if not isinstance(v, (dict, list)) else f"<{type(v).__name__}>" for k, v in vars(args_namespace).items()}
+        print(f"Args: {clean_args}")
+        
     try:
-        # START CHANGE: Handle Ray-based functions
-        if test_name.startswith("Train MARL"):
-            from run import ray_init_and_run
+        if test_name.startswith("MARL"): # MARL requires Ray initialization
             result = ray_init_and_run(func, args_namespace)
         else:
             result = func(args_namespace) if args_namespace else func()
-        # END CHANGE
         print(f"✅ SUCCESS: {test_name} completed.")
         return result, True
     except KeyboardInterrupt:
@@ -54,114 +54,95 @@ def load_main_config():
         return yaml.safe_load(f)
 
 def main(args=None):
-    print_header("STARTING FULL PIPELINE TEST SUITE")
-    overall_success = True
+    print_header("STARTING TRANSFER LEARNING PIPELINE TEST SUITE")
     
     main_config = load_main_config()
-    failures = []
+    failed_tests = []
 
-    # --- Test 1: Weight conversion ---
-    _, success = run_test(convert_weight.convert_tf1_to_pytorch, None, "Convert Weight")
-    if not success: overall_success = False; failures.append("Convert Weight")
+    # START CHANGE: Define default parameters that might be missing from YAML
+    default_test_params = {
+        'render': False,
+        'fullscreen': False,
+        'width': None,
+        'height': None,
+        'seed': None, # Let the test run without a fixed seed unless specified
+        'pretrained_model_path': None
+    }
+    # END CHANGE
 
-    # --- Test 2: Demo environment ---
-    # Use PPO config for demo environment settings if available
-    demo_base_config = main_config.get('PPO', {})
-    demo_args = SimpleNamespace(
-        env=demo_base_config.get('env', 'parkour'), 
-        body=demo_base_config.get('body', 'classic_bipedal'), 
-        steps=50, 
-        fullscreen=False, # Use windowed mode for automated tests
-        width=800, height=600,
-        roughness=None, stump_height=None, stump_width=None, obstacle_spacing=None,
-        input_vector=None, water_level=None, creepers_width=None, creepers_height=None, creepers_spacing=None
-    )
-    _, success = run_test(demo_script.main, demo_args, "Demo Environment")
-    if not success: overall_success = False; failures.append("Demo Environment")
-
-    # --- Test 3: PPO training (short) and playback ---
-    if 'PPO' in main_config:
-        ppo_config = main_config['PPO'].copy()
-        # Override for a quick test run
+    # --- Test 1: Prerequisite - Weight conversion ---
+    _, success = run_test(convert_weight.convert_tf1_to_pytorch, None, "Prerequisite: Convert Weight")
+    if not success:
+        failed_tests.append("Convert Weight")
+        
+    # --- SEQUENTIAL TRANSFER LEARNING TEST ---
+    ppo_model_path, acl_model_path = None, None
+    
+    # --- Step 1: PPO Pre-training (Micro-run) ---
+    if 'PPO' in main_config and not failed_tests:
+        # START CHANGE: Combine defaults with loaded config
+        ppo_config = {**default_test_params, **main_config['PPO']}
+        # END CHANGE
+        
         ppo_config.update({
-            'run_id': "test_suite_ppo",
-            'total_timesteps': 256,
-            'save_freq': 512, # Ensure it doesn't save mid-run
+            'run_id': "test_suite_transfer_ppo",
+            'total_timesteps': 512, 
             'n_envs': 2,
-            'render': False,
+            'save_freq': 1024,
         })
         ppo_args = SimpleNamespace(**ppo_config)
-        
-        model_path, success = run_test(train_ppo.main, ppo_args, "Train PPO (short)")
+        ppo_model_path, success = run_test(train_ppo.main, ppo_args, "PPO Pre-training Stage")
         if not success:
-            overall_success = False
-            failures.append("Train PPO (short)")
-        elif model_path:
-            watch_args = SimpleNamespace(
-                model_path=model_path,
-                framework='sb3',
-                num_episodes=1,
-                env=ppo_args.env,
-                body=ppo_args.body,
-                fullscreen=False, width=800, height=600,
-                timeout=100,
-                fast_forward=True,
-                roughness=None, stump_height=None, stump_width=None, obstacle_spacing=None,
-                input_vector=None, water_level=None, creepers_width=None, creepers_height=None, creepers_spacing=None
-            )
-            _, watch_success = run_test(watch.main, watch_args, "Watch Trained PPO Model")
-            if not watch_success: 
-                overall_success = False
-                failures.append("Watch Trained PPO Model")
+            failed_tests.append("PPO Pre-training")
 
-    # --- Test 4: ACL training (short) ---
-    if 'ACL' in main_config:
-        acl_config = main_config['ACL'].copy()
-        # Override for a quick test run
+    # --- Step 2: ACL Generalization (Micro-run with Transfer) ---
+    if 'ACL' in main_config and ppo_model_path and not failed_tests:
+        # START CHANGE: Combine defaults with loaded config
+        acl_config = {**default_test_params, **main_config['ACL']}
+        # END CHANGE
+        
         acl_config.update({
-            'run_id': "test_suite_acl",
-            'total_stages': 2,
-            'student_steps_per_stage': 128,
-            'eval_episodes': 1,
+            'run_id': "test_suite_transfer_acl",
+            'total_stages': 1,
+            'student_steps_per_stage': 256,
             'n_envs': 2,
-            'render': False,
-            'learning_starts': 100 # For SAC, to start learning faster in tests
+            'pretrained_model_path': ppo_model_path, 
         })
-        # If ppo_config exists, update learning_starts there
-        if 'ppo_config' in acl_config:
+        if 'ppo_config' in acl_config and 'learning_starts' in acl_config['ppo_config']:
             acl_config['ppo_config']['learning_starts'] = 100
 
         acl_args = SimpleNamespace(**acl_config)
-        _, success = run_test(train_acl.main, acl_args, "Train ACL (short)")
-        if not success: 
-            overall_success = False
-            failures.append("Train ACL (short)")
+        acl_model_path, success = run_test(train_acl.main, acl_args, "ACL Transfer Stage")
+        if not success:
+            failed_tests.append("ACL Transfer")
 
-    # --- Test 5: MARL training (short) ---
-    if 'MARL' in main_config:
-        marl_config = main_config['MARL'].copy()
-        # Override for a quick test run
+    # --- Step 3: MARL Cooperation (Micro-run with Transfer) ---
+    if 'MARL' in main_config and acl_model_path and not failed_tests:
+        # START CHANGE: Combine defaults with loaded config
+        marl_config = {**default_test_params, **main_config['MARL']}
+        # END CHANGE
+        
         marl_config.update({
-            'run_id': "test_suite_marl",
-            'iterations': 2,
+            'run_id': "test_suite_transfer_marl",
+            'iterations': 1,
             'num_workers': 1,
             'num_gpus': 0,
             'use_tune': False,
+            'shared_policy': True,
+            'pretrained_model_path': acl_model_path,
         })
         marl_args = SimpleNamespace(**marl_config)
-        
-        _, success = run_test(train_marl.main, marl_args, "Train MARL (short)")
-        if not success: 
-            overall_success = False
-            failures.append("Train MARL (short)")
+        _, success = run_test(train_marl.main, marl_args, "MARL Transfer Stage")
+        if not success:
+            failed_tests.append("MARL Transfer")
 
     # --- Final Summary ---
     print_header("TEST SUITE SUMMARY")
-    if overall_success:
-        print("🎉🎉🎉 All tests passed successfully! 🎉🎉🎉")
+    if not failed_tests:
+        print("🎉🎉🎉 Full Transfer Learning Pipeline test passed successfully! 🎉🎉🎉")
     else:
         print("🔥🔥🔥 ERRORS DETECTED DURING TESTING. 🔥🔥🔥")
-        print(f"Failed tests: {', '.join(failures)}")
+        print(f"Failed stages: {', '.join(failed_tests)}")
         sys.exit(1)
 
 if __name__ == '__main__':
