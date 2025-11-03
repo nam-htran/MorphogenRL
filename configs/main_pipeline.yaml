@@ -30,14 +30,14 @@ PPO:
 
 ACL:
   enabled: true
-  run_id: "acl_climbing_run_SAC"
+  run_id: "acl_climbing_run_SAC_tuned_reward"
   env: "parkour"
   body: "climbing_profile_chimpanzee"
   student_steps_per_stage: 200000
   total_stages: 40    
   eval_episodes: 10
   mastery_threshold: 0.0
-  difficulty_increment: 0.025
+  difficulty_increment: 0.015
   horizon: 5000
   n_envs: 16
   seed: 42
@@ -45,6 +45,18 @@ ACL:
   creepers_width: 0.5
   creepers_height: 2.0
   creepers_spacing: 0.8
+
+  curriculum_replay:
+    enabled: true
+    replay_ratio: 0.2
+
+  reward_shaping:
+    progress_multiplier: 200.0
+    velocity_multiplier: 0.5
+    torque_penalty_multiplier: 30.0
+    alive_bonus: 0.02
+    stagnation_penalty: 0.1
+    grasp_bonus: 0.05
 
   ppo_config:
     learning_rate: 0.0003
