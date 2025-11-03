@@ -147,12 +147,20 @@ if __name__ == '__main__':
     demo_parser.set_defaults(func=lambda args: run_task(demo_script.main, args, "Environment Demo"))
     
     check_parser = subparsers.add_parser('check_envs', help="Run comprehensive checks on all environments and bodies."); check_all_script.add_check_all_args(check_parser)
+    # ### START CHANGE: FIX AttributeError ###
+    check_parser.add_argument('--seed', type=int, default=None, help="Global seed for reproducibility.")
+    # ### END CHANGE ###
     check_parser.set_defaults(func=lambda args: run_task(check_all_script.main, args, "Environment Check"))
     
     test_parser = subparsers.add_parser('test_suite', help="Run the quick, integrated project test suite.")
+    # ### START CHANGE: FIX AttributeError ###
+    test_parser.add_argument('--seed', type=int, default=None, help="Global seed for reproducibility.")
+    # ### END CHANGE ###
     test_parser.set_defaults(func=test_suite_script.main)
     
     convert_parser = subparsers.add_parser('convert_weights', help="Convert legacy TF1 weights to PyTorch.")
+    # Add seed for consistency, although this script doesn't use it.
+    convert_parser.add_argument('--seed', type=int, default=None, help="Global seed for reproducibility.")
     convert_parser.set_defaults(func=convert_weight.convert_tf1_to_pytorch)
 
     args = parser.parse_args()

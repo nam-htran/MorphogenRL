@@ -356,7 +356,7 @@ class InteractiveMultiAgentParkour(ParametricContinuousParkour, MultiAgentEnv):
 
         for obj in self.drawlist:
             # Check if object still exists in the physics world before rendering
-            if not obj or not obj.valid:
+            if not obj:
                 continue
 
             is_an_agent_head = False

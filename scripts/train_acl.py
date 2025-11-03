@@ -105,9 +105,6 @@ def evaluate_student(student_model: PPO, env_id: str, body_type: str, difficulty
         
         for i in range(num_episodes):
             print(f"  Evaluating Episode {i + 1}/{num_episodes}...")
-            # START FIX: The evaluation environment is already recreated for each episode via make_vec_env,
-            # so we don't need to call set_environment again. This makes it cleaner.
-            # END FIX
             obs = vec_eval_env.reset()
             done = False
             episode_reward = 0.0
@@ -195,8 +192,11 @@ def main(args: argparse.Namespace) -> str:
             if temp_model_path and os.path.exists(temp_model_path):
                 print(f"Loading model weights from previous stage: {temp_model_path}")
                 student = PPO.load(temp_model_path, env=vec_env, tensorboard_log=os.path.join(log_dir, "student"), device="auto")
-                # Reset timesteps to ensure tensorboard logs correctly for the new stage
-                student.set_logger(student.logger) 
+                # ### START CHANGE: FIX AttributeError ###
+                # The following line is removed because the `logger` attribute is not exposed in the same way
+                # in newer versions of SB3, and the logger is already correctly configured by PPO.load().
+                # student.set_logger(student.logger)
+                # ### END CHANGE ###
             else:
                 print("Initializing new PPO model for the first stage.")
                 student = PPO("MlpPolicy", vec_env, verbose=0, tensorboard_log=os.path.join(log_dir, "student"), device="auto", **ppo_kwargs)

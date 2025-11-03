@@ -84,17 +84,27 @@ def get_env_creator(mode):
     if mode == "cooperative": base_env_creator_func = lambda config: MultiAgentParkour(config=config)
     elif mode == "interactive": base_env_creator_func = lambda config: InteractiveMultiAgentParkour(config=config)
     else: raise ValueError(f"Invalid mode: '{mode}'.")
+    
+    # START FIX: Wrap the environment to clip observations and prevent NaN/inf values from crashing workers.
     def wrapped_env_creator(config):
         base_env = base_env_creator_func(config)
+        
+        # This function will be applied to the observation from the environment at each step.
         def clip_multi_agent_obs(obs_dict):
             return {agent_id: np.clip(agent_obs, -10.0, 10.0) for agent_id, agent_obs in obs_dict.items()}
+
+        # We must also update the observation space to reflect the clipped values.
         original_obs_space = base_env.observation_space
         clipped_sub_spaces = {}
         if isinstance(original_obs_space, gym.spaces.Dict):
              for agent_id, sub_space in original_obs_space.items():
                 clipped_sub_spaces[agent_id] = gym.spaces.Box(low=-10.0, high=10.0, shape=sub_space.shape, dtype=sub_space.dtype)
+        
         clipped_observation_space = gym.spaces.Dict(clipped_sub_spaces)
+        
+        # Return the original environment wrapped with our observation transformation.
         return TransformObservation(base_env, clip_multi_agent_obs, clipped_observation_space)
+    # END FIX
     return wrapped_env_creator
 
 def main(args: argparse.Namespace) -> Optional[str]:

@@ -22,33 +22,28 @@ class ContactDetector(WaterContactDetector, ClimbingContactDetector):
         self.env = env
 
     def BeginContact(self, contact):
+        fA, fB = contact.fixtureA, contact.fixtureB
+        if (not hasattr(fA, 'body') or not hasattr(fB, 'body') or
+                fA.body is None or fB.body is None or
+                not hasattr(fA.body, 'userData') or not hasattr(fB.body, 'userData') or
+                fA.body.userData is None or fB.body.userData is None or
+                not hasattr(fA.body.userData, 'object_type') or
+                not hasattr(fB.body.userData, 'object_type')):
+            return
+
         bodies = [contact.fixtureA.body, contact.fixtureB.body]
 
-        if any([hasattr(body.userData, 'object_type') and body.userData.object_type == CustomUserDataObjectTypes.WATER for body in bodies]):
+        if any([body.userData.object_type == CustomUserDataObjectTypes.WATER for body in bodies]):
             WaterContactDetector.BeginContact(self, contact)
-        elif any([hasattr(body.userData, 'object_type') and body.userData.object_type == CustomUserDataObjectTypes.BODY_SENSOR for body in bodies]):
-            ClimbingContactDetector.BeginContact(self, contact)
-        else:
-            if contact.fixtureA.sensor or contact.fixtureB.sensor:
-                return
-            for idx, body in enumerate(bodies):
-                if (hasattr(body.userData, 'object_type') and
-                    body.userData.object_type == CustomUserDataObjectTypes.BODY_OBJECT and
-                    body.userData.check_contact):
-                    body.userData.has_contact = True
-                    other_body = bodies[(idx + 1) % 2]
-                    if body.userData.is_contact_critical and \
-                            not (hasattr(other_body.userData, 'object_type') and
-                                 other_body.userData.object_type in [CustomUserDataObjectTypes.GRIP_TERRAIN, CustomUserDataObjectTypes.SENSOR_GRIP_TERRAIN] and
-                                 self.env.agent_body.body_type == BodyTypesEnum.CLIMBER):
-                        self.env.critical_contact = True
-
+            
     def EndContact(self, contact):
         fA, fB = contact.fixtureA, contact.fixtureB
         if (not hasattr(fA, 'body') or not hasattr(fB, 'body') or
                 fA.body is None or fB.body is None or
                 not hasattr(fA.body, 'userData') or not hasattr(fB.body, 'userData') or
-                fA.body.userData is None or fB.body.userData is None):
+                fA.body.userData is None or fB.body.userData is None or
+                not hasattr(fA.body.userData, 'object_type') or
+                not hasattr(fB.body.userData, 'object_type')):
             return
 
         bodies = [fA.body, fB.body]

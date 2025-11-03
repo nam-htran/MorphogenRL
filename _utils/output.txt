@@ -21,8 +21,9 @@ from utils.seeding import set_seed
 
 def ray_init_and_run(func, args):
     """Initializes Ray and runs a function that requires it."""
-    print("Initializing Ray...")
-    ray.init(ignore_reinit_error=True)
+    if not ray.is_initialized():
+        print("Initializing Ray...")
+        ray.init(ignore_reinit_error=True)
     
     try:
         func(args)
@@ -118,7 +119,7 @@ if __name__ == '__main__':
     pipeline_parser.add_argument('--width', type=int, help="Override window width for watching.")
     pipeline_parser.add_argument('--height', type=int, help="Override window height for watching.")
     pipeline_parser.add_argument('--fullscreen', action='store_true', help="Override fullscreen for watching.")
-    pipeline_parser.add_argument('--seed', type=int, default=None, help="Global seed for reproducibility.")
+    pipeline_parser.add_argument('--seed', type=int, default=None, help="Global seed for reproducibility. Overrides YAML config.")
     pipeline_parser.set_defaults(func=run_pipeline)
 
     train_parser = subparsers.add_parser('train', help="Train a specific algorithm.")
@@ -158,20 +159,46 @@ if __name__ == '__main__':
 
     args = parser.parse_args()
     
-    if hasattr(args, 'seed') and args.seed is not None:
-        set_seed(args.seed)
+    # START CHANGE: Smart seed handling
+    # Priority: Command line > YAML config > No seed
+    seed = args.seed
+    if args.command == 'pipeline' and seed is None:
+        try:
+            config = load_config(args.config)
+            for stage_name in ['PPO', 'ACL', 'MARL']:
+                stage_config = config.get(stage_name, {})
+                if stage_config.get('enabled', False):
+                    seed_from_config = stage_config.get('seed')
+                    if seed_from_config is not None:
+                        print(f"INFO: Using seed '{seed_from_config}' from '{stage_name}' configuration in '{args.config}'.")
+                        seed = seed_from_config
+                        break # Use the first one found
+        except Exception as e:
+            print(f"WARNING: Could not load config to check for seed. Reason: {e}")
     
-    if args.command in ray_commands:
-        ray_init_and_run(args.func, args)
-    else:
-        if hasattr(args, 'func'):
-            is_no_args_func = 'args' not in args.func.__code__.co_varnames and args.func.__code__.co_argcount == 0
-            if is_no_args_func:
-                 run_task(args.func, None, args.command.upper())
-            else:
-                 run_task(args.func, args, args.command.upper())
+    if seed is not None:
+        print(f"INFO: Setting global seed to {seed}.")
+        set_seed(seed)
+        # Ensure the args object carries the definitive seed value
+        args.seed = seed
+    # END CHANGE
+    
+    try:
+        if args.command in ray_commands:
+            ray_init_and_run(args.func, args)
         else:
-            parser.print_help()
+            if hasattr(args, 'func'):
+                is_no_args_func = 'args' not in args.func.__code__.co_varnames and args.func.__code__.co_argcount == 0
+                if is_no_args_func:
+                     run_task(args.func, None, args.command.upper())
+                else:
+                     run_task(args.func, args, args.command.upper())
+            else:
+                parser.print_help()
+    finally:
+        if ray.is_initialized():
+            ray.shutdown()
+            print("Final Ray shutdown completed.")
 
 ===== .\configs\main_pipeline.yaml =====
 WATCH:
@@ -206,16 +233,17 @@ PPO:
 
 ACL:
   enabled: true
-  run_id: "acl_reach_the_end_run"
+  run_id: "acl_climbing_run_final"
   env: "parkour"
   body: "climbing_profile_chimpanzee"
-  student_steps_per_stage: 600000
-  total_stages: 10    
+  student_steps_per_stage: 200000
+  total_stages: 40    
   eval_episodes: 10
-  mastery_threshold: -295.0
-  difficulty_increment: 0.05
+  mastery_threshold: 0.0
+  difficulty_increment: 0.025
   horizon: 5000
-  n_envs: 8 
+  n_envs: 16
+  seed: 42
   
   creepers_width: 0.5
   creepers_height: 2.0
@@ -224,19 +252,19 @@ ACL:
   ppo_config:
     gamma: 0.999
     n_steps: 4096
-    ent_coef: 0.02
+    ent_coef: 0.025
     learning_rate_schedule:
       type: "linear"
-      initial_value: 3e-4
+      initial_value: 1e-4
     vf_coef: 0.5
     max_grad_norm: 0.5
-    n_epochs: 10
+    n_epochs: 20
     batch_size: 128
     gae_lambda: 0.95
     clip_range: 0.2
 
 MARL:
-  enabled: true
+  enabled: false
   run_id: "marl_reach_the_end_run"
   mode: "interactive"
   n_agents: 2
@@ -268,6 +296,30 @@ MARL:
       
     env_runners:
       rollout_fragment_length: 1024
+
+===== .\output\marl\test_suite_marl\rllib_checkpoint.json =====
+{"class_and_ctor_args_file": "class_and_ctor_args.pkl", "state_file": "algorithm_state", "ray_version": "2.50.1", "ray_commit": "7cf6817996f5304b5c808453a997fc1570dcde25", "checkpoint_version": "2.1"}
+
+===== .\output\marl\test_suite_marl\env_runner\metadata.json =====
+{"class_and_ctor_args_file": "class_and_ctor_args.pkl", "state_file": "state", "ray_version": "2.50.1", "ray_commit": "7cf6817996f5304b5c808453a997fc1570dcde25", "checkpoint_version": "2.1"}
+
+===== .\output\marl\test_suite_marl\env_runner\env_to_module_connector\metadata.json =====
+{"class_and_ctor_args_file": "class_and_ctor_args.pkl", "state_file": "state", "ray_version": "2.50.1", "ray_commit": "7cf6817996f5304b5c808453a997fc1570dcde25", "checkpoint_version": "2.1"}
+
+===== .\output\marl\test_suite_marl\env_runner\module_to_env_connector\metadata.json =====
+{"class_and_ctor_args_file": "class_and_ctor_args.pkl", "state_file": "state", "ray_version": "2.50.1", "ray_commit": "7cf6817996f5304b5c808453a997fc1570dcde25", "checkpoint_version": "2.1"}
+
+===== .\output\marl\test_suite_marl\learner_group\metadata.json =====
+{"class_and_ctor_args_file": "class_and_ctor_args.pkl", "state_file": "state", "ray_version": "2.50.1", "ray_commit": "7cf6817996f5304b5c808453a997fc1570dcde25", "checkpoint_version": "2.1"}
+
+===== .\output\marl\test_suite_marl\learner_group\learner\metadata.json =====
+{"class_and_ctor_args_file": "class_and_ctor_args.pkl", "state_file": "state", "ray_version": "2.50.1", "ray_commit": "7cf6817996f5304b5c808453a997fc1570dcde25", "checkpoint_version": "2.1"}
+
+===== .\output\marl\test_suite_marl\learner_group\learner\rl_module\metadata.json =====
+{"class_and_ctor_args_file": "class_and_ctor_args.pkl", "state_file": "module_state", "ray_version": "2.50.1", "ray_commit": "7cf6817996f5304b5c808453a997fc1570dcde25", "checkpoint_version": "2.1"}
+
+===== .\output\marl\test_suite_marl\learner_group\learner\rl_module\shared_policy\metadata.json =====
+{"class_and_ctor_args_file": "class_and_ctor_args.pkl", "state_file": "module_state", "ray_version": "2.50.1", "ray_commit": "7cf6817996f5304b5c808453a997fc1570dcde25", "checkpoint_version": "2.1"}
 
 ===== .\preprocessing\convert_weight.py =====
 import tensorflow as tf
@@ -1221,46 +1273,40 @@ def add_acl_args(parser: argparse.ArgumentParser) -> argparse.ArgumentParser:
     group.add_argument("--eval_episodes", type=int, default=10, help="Number of evaluation episodes.")
     group.add_argument("--mastery_threshold", type=float, default=150.0, help="Reward threshold to increase difficulty.")
     group.add_argument("--difficulty_increment", type=float, default=0.01, help="Difficulty increase step.")
-    group.add_argument("--render", action="store_true", help="Enable rendering during training and evaluation.")
+    group.add_argument("--render", action='store_true', help="Enable rendering during training and evaluation.")
     group.add_argument("--n_envs", type=int, default=8, help="Number of parallel environments for training.")
     parser.add_argument('--horizon', type=int, default=3000, help="Max steps per episode.")
     return parser
 
 def sample_task_params(difficulty_ratio: float) -> dict:
     """
-    Tạo ra các tham số môi trường dựa trên độ khó hiện tại (difficulty_ratio).
-    Đây là phiên bản được thiết kế lại để dạy agent leo trèo.
+    Generates environment parameters based on a two-stage curriculum.
     """
-    # --- LOGIC CHƯƠNG TRÌNH HỌC MỚI CHO AGENT LEO TRÈO ---
+    min_spacing = 0.05
+    max_spacing = 2.0
+    max_height = 10.0
+    min_height = 1.5
 
-    # 1. Điều chỉnh KHOẢNG CÁCH giữa các "creeper" (cọc bám)
-    #    - Ở độ khó 0.0: Các cọc gần như dính liền vào nhau, tạo thành một "bức tường" dễ bám.
-    #    - Khi độ khó tăng: Khoảng cách tăng dần, buộc agent phải học cách vươn xa hơn.
-    min_spacing = 0.05  # Khoảng cách tối thiểu, rất gần
-    max_spacing = 2.0   # Khoảng cách tối đa ở độ khó cao nhất
-    current_spacing = min_spacing + difficulty_ratio * (max_spacing - min_spacing)
+    if difficulty_ratio < 0.5:
+        stage_1_progress = difficulty_ratio * 2
+        current_spacing = min_spacing + stage_1_progress * (max_spacing - min_spacing)
+        current_height = max_height
+    else:
+        stage_2_progress = (difficulty_ratio - 0.5) * 2
+        current_spacing = max_spacing
+        current_height = max_height - stage_2_progress * (max_height - min_height)
 
-    # 2. Điều chỉnh CHIỀU CAO của các "creeper"
-    #    - Ở độ khó 0.0: Các cọc rất cao, agent khó có thể trượt ra ngoài.
-    #    - Khi độ khó tăng: Chiều cao giảm dần về mức bình thường.
-    max_height = 10.0   # Bắt đầu với chiều cao rất lớn (tạo thành tường)
-    min_height = 1.5    # Chiều cao bình thường ở độ khó cao nhất
-    current_height = max_height - difficulty_ratio * (max_height - min_height)
-
-    # 3. Giữ lại logic tạo địa hình ngẫu nhiên từ code gốc
-    #    (Phần này ít quan trọng hơn ở giai đoạn đầu cho agent leo trèo)
     low_bounds = EASY_PARAMS
     high_bounds = np.array([lim[1] if p > 0 else lim[0] for p, lim in zip(EASY_PARAMS, PARAM_SPACE_LIMS)])
     current_max = low_bounds + difficulty_ratio * (high_bounds - low_bounds)
     sampled_terrain_params = np.random.uniform(low=low_bounds, high=current_max)
 
-    # 4. Trả về một từ điển chứa tất cả các tham số cho môi trường
     return {
         "input_vector": sampled_terrain_params[:3],
         "water_level": sampled_terrain_params[3],
         "creepers_spacing": current_spacing,
         "creepers_height": current_height,
-        "creepers_width": 0.5  # Giữ nguyên độ rộng của cọc
+        "creepers_width": 0.5
     }
 
 def evaluate_student(student_model: PPO, env_id: str, body_type: str, difficulty_ratio: float, num_episodes: int, args: argparse.Namespace, render_mode: str = None, stats_path: str = None) -> float:
@@ -1269,10 +1315,7 @@ def evaluate_student(student_model: PPO, env_id: str, body_type: str, difficulty
     try:
         def make_eval_env():
             task = sample_task_params(difficulty_ratio)
-            env = build_and_setup_env(env_id, body_type, task, render_mode=render_mode, args=args)
-            if render_mode == "human":
-                setup_render_window(env, args)
-            return env
+            return build_and_setup_env(env_id, body_type, task, render_mode=render_mode, args=args)
 
         vec_eval_env = make_vec_env(make_eval_env, n_envs=1)
         if stats_path and os.path.exists(stats_path):
@@ -1282,24 +1325,20 @@ def evaluate_student(student_model: PPO, env_id: str, body_type: str, difficulty
         
         for i in range(num_episodes):
             print(f"  Evaluating Episode {i + 1}/{num_episodes}...")
-            if i > 0:
-                task = sample_task_params(difficulty_ratio)
-                vec_eval_env.env_method("set_environment", **task)
-
+            # START FIX: The evaluation environment is already recreated for each episode via make_vec_env,
+            # so we don't need to call set_environment again. This makes it cleaner.
+            # END FIX
             obs = vec_eval_env.reset()
             done = False
             episode_reward = 0.0
             while not done:
                 if render_mode == "human":
                     vec_eval_env.render()
-                    if vec_eval_env.envs[0].unwrapped.viewer and vec_eval_env.envs[0].unwrapped.viewer.window.has_exit:
-                        print("Window closed. Evaluation stopped.")
-                        return -np.inf
-
                 action, _ = student_model.predict(obs, deterministic=True)
                 obs, reward, done_vec, info = vec_eval_env.step(action)
                 done = done_vec[0]
-                episode_reward += info[0].get('episode', {}).get('r', 0)
+                if done: # Use the final info dict to get the true episode reward
+                    episode_reward = info[0].get('episode', {}).get('r', 0)
             total_rewards += episode_reward
     finally:
         if vec_eval_env:
@@ -1324,30 +1363,17 @@ def main(args: argparse.Namespace) -> str:
 
     render_mode = "human" if args.render else None
     
-    print("--- Initializing Student (PPO) ---")
-    initial_params = sample_task_params(0.0)
-    initial_n_envs = 1 if args.render else args.n_envs
-    
-    vec_env = make_vec_env(
-        lambda: build_and_setup_env(args.env, args.body, initial_params, args=args),
-        n_envs=initial_n_envs,
-        seed=getattr(args, 'seed', None)
-    )
-    vec_env = VecNormalize(vec_env, norm_obs=True, norm_reward=True, clip_obs=10.)
-
+    # --- PPO Hyperparameters ---
     ppo_kwargs = getattr(args, 'ppo_config', {})
-    
     if 'learning_rate_schedule' in ppo_kwargs:
         ppo_kwargs['learning_rate'] = parse_schedule(ppo_kwargs.pop('learning_rate_schedule'))
     if 'clip_range_schedule' in ppo_kwargs:
         ppo_kwargs['clip_range'] = parse_schedule(ppo_kwargs.pop('clip_range_schedule'))
-
     print("Using PPO hyperparameters for student:", ppo_kwargs)
     
-    student = PPO("MlpPolicy", vec_env, verbose=0, tensorboard_log=os.path.join(log_dir, "student"), **ppo_kwargs)
-    
+    # --- ACL Main Loop ---
     difficulty_ratio = 0.0
-    print(f"\n--- Starting ACL training over {args.total_stages} stages ---")
+    student = None
     final_path = os.path.join(model_dir, "student_final.zip")
 
     try:
@@ -1357,16 +1383,58 @@ def main(args: argparse.Namespace) -> str:
             print(f"\n--- Stage {stage}/{args.total_stages} | Difficulty: {difficulty_ratio:.3f} ---")
             print(f"Task parameters: {task_params}")
 
-            student.get_env().env_method("set_environment", **task_params)
-            student.get_env().reset()
+            # START FIX: Implement Clean Reset Logic
+            # 1. Save current model and environment stats (if they exist)
+            if student:
+                temp_model_path = os.path.join(model_dir, "student_temp.zip")
+                student.save(temp_model_path)
+                student.get_env().save(stats_path)
+                # Close the old environment completely
+                student.get_env().close()
+                del student # Free up memory
+            else:
+                temp_model_path = None
+
+            # 2. Create a brand new vectorized environment with the new task parameters
+            n_envs = 1 if args.render else args.n_envs
+            vec_env = make_vec_env(
+                lambda: build_and_setup_env(args.env, args.body, task_params, args=args),
+                n_envs=n_envs,
+                seed=getattr(args, 'seed', None)
+            )
+            
+            # 3. Load old normalization stats if they exist, otherwise create new ones
+            if os.path.exists(stats_path):
+                print(f"Loading VecNormalize stats from: {stats_path}")
+                vec_env = VecNormalize.load(stats_path, vec_env)
+            else:
+                print("Creating new VecNormalize stats.")
+                vec_env = VecNormalize(vec_env, norm_obs=True, norm_reward=True, clip_obs=10.)
+
+            # 4. Create a new PPO model and load the weights from the previous stage
+            if temp_model_path and os.path.exists(temp_model_path):
+                print(f"Loading model weights from previous stage: {temp_model_path}")
+                student = PPO.load(temp_model_path, env=vec_env, tensorboard_log=os.path.join(log_dir, "student"), device="auto")
+                # Reset timesteps to ensure tensorboard logs correctly for the new stage
+                student.set_logger(student.logger) 
+            else:
+                print("Initializing new PPO model for the first stage.")
+                student = PPO("MlpPolicy", vec_env, verbose=0, tensorboard_log=os.path.join(log_dir, "student"), device="auto", **ppo_kwargs)
+            # END FIX
 
             student.learn(total_timesteps=args.student_steps_per_stage, reset_num_timesteps=False, progress_bar=True)
             
-            # Save stats before evaluation
+            # Save the normalization stats from the current training environment
             student.get_env().save(stats_path)
             
             print(f"Evaluating agent over {args.eval_episodes} episodes...")
-            avg_reward = evaluate_student(student, args.env, args.body, difficulty_ratio, args.eval_episodes, args, render_mode=render_mode, stats_path=stats_path)
+            # During evaluation, we need a separate, non-training environment
+            eval_model_path = os.path.join(model_dir, "student_eval_temp.zip")
+            student.save(eval_model_path)
+            eval_model = PPO.load(eval_model_path, device="auto")
+            
+            avg_reward = evaluate_student(eval_model, args.env, args.body, difficulty_ratio, args.eval_episodes, args, render_mode=render_mode, stats_path=stats_path)
+            del eval_model # Clean up
             
             print(f"Average reward = {avg_reward:.2f}")
             if avg_reward > args.mastery_threshold:
@@ -1377,7 +1445,7 @@ def main(args: argparse.Namespace) -> str:
             else:
                 print(f"Below threshold ({args.mastery_threshold:.2f}). Keeping difficulty unchanged.")
 
-            if stage % 25 == 0:
+            if stage % 25 == 0 or stage == args.total_stages:
                 model_path = os.path.join(model_dir, f"student_{args.run_id}_stage_{stage}.zip")
                 student.save(model_path)
                 print(f"Model saved: {model_path}")
@@ -1389,10 +1457,9 @@ def main(args: argparse.Namespace) -> str:
     finally:
         if student and student.get_env():
             student.get_env().save(stats_path)
-            print(f"VecNormalize stats saved to: {stats_path}")
+            print(f"Final VecNormalize stats saved to: {stats_path}")
+            student.save(final_path)
             student.get_env().close()
-
-    student.save(final_path)
 
     print(f"\n{'=' * 60}\nACL training complete.")
     print(f"Final Student model saved at: {final_path}")
@@ -1668,7 +1735,9 @@ def main(args: argparse.Namespace) -> str:
 
     print("Using PPO hyperparameters:", ppo_kwargs)
 
-    model = PPO("MlpPolicy", env, verbose=1, tensorboard_log=os.path.join(output_base_dir, "logs"), **ppo_kwargs)
+    # START FIX: Add device="auto" to resolve GPU warnings and improve performance
+    model = PPO("MlpPolicy", env, verbose=1, tensorboard_log=os.path.join(output_base_dir, "logs"), device="auto", **ppo_kwargs)
+    # END FIX
     
     checkpoint_callback = CheckpointCallback(
         save_freq=max(args.save_freq // args.n_envs, 1),
@@ -2035,10 +2104,6 @@ class InteractiveMultiAgentParkour(ParametricContinuousParkour, MultiAgentEnv):
         ParametricContinuousParkour.__init__(self, **parent_config)
         MultiAgentEnv.__init__(self)
         
-        # START FIX: Xóa dòng gây lỗi AttributeError
-        # Dòng 'self.agent_body = self.agent_bodies' đã bị xóa khỏi đây vì nó không chính xác và gây lỗi.
-        # END FIX
-        
         self.agent_bodies = {}
         self.prev_shapings = {}
         self.possible_agents = [f"agent_{i}" for i in range(self.n_agents)]
@@ -2097,6 +2162,17 @@ class InteractiveMultiAgentParkour(ParametricContinuousParkour, MultiAgentEnv):
             if body: body.destroy(self.world)
         self.agent_bodies = {}
 
+    # START FIX: Add a safe method to destroy specific agent bodies during simulation
+    def _destroy_agents_in_simulation(self, agent_ids_to_destroy):
+        """Safely destroys the bodies of terminated agents."""
+        if not agent_ids_to_destroy:
+            return
+        for agent_id in agent_ids_to_destroy:
+            if agent_id in self.agent_bodies and self.agent_bodies[agent_id]:
+                self.agent_bodies[agent_id].destroy(self.world)
+                self.agent_bodies[agent_id] = None # Mark as destroyed
+    # END FIX
+
     def _generate_agents(self):
         self._destroy_agents()
         self.agent_bodies = {}
@@ -2135,59 +2211,60 @@ class InteractiveMultiAgentParkour(ParametricContinuousParkour, MultiAgentEnv):
     def step(self, action_dict):
         self.ts += 1
 
+        # Handle button/door mechanism
         self.button_pressed = False
         if self.button:
             for agent_id in self.agents:
                 body = self.agent_bodies[agent_id]
-                for part in body.body_parts:
-                    for contact in part.contacts:
-                        if contact.other == self.button: self.button_pressed = True; break
-                    if self.button_pressed: break
+                if body: # Check if body exists
+                    for part in body.body_parts:
+                        for contact in part.contacts:
+                            if contact.other == self.button: self.button_pressed = True; break
+                        if self.button_pressed: break
                 if self.button_pressed: break
         
         if self.door_joint: self.door_joint.motorSpeed = 5.0 if self.button_pressed else -5.0
 
+        # Apply actions
         for agent_id, action in action_dict.items():
-            if agent_id in self.agents and action is not None and len(action) > 0:
+            if agent_id in self.agents and self.agent_bodies.get(agent_id) and action is not None and len(action) > 0:
                 self.agent_bodies[agent_id].activate_motors(action)
 
+        # Step physics world
         self.world.Step(1.0 / FPS, 6 * 30, 2 * 30)
+        
         rewards = {}
-        positions = {aid: self.agent_bodies[aid].reference_head_object.position for aid in self.agents if aid in self.agent_bodies}
+        positions = {aid: self.agent_bodies[aid].reference_head_object.position for aid in self.agents if self.agent_bodies.get(aid)}
         if positions:
             leading_agent_pos_x = max(p[0] for p in positions.values()); avg_agent_pos_y = sum(p[1] for p in positions.values()) / len(positions)
             self.scroll = [leading_agent_pos_x - self.rendering_viewer_w / SCALE / 5, avg_agent_pos_y - self.rendering_viewer_h / SCALE / 2.5]
             
+        # START FIX: Improved termination logic for stability
+        agents_terminated_this_step = []
         active_agents_before_step = list(self.agents)
 
-        if self.reward_type == "individual":
-            for agent_id in active_agents_before_step:
-                body = self.agent_bodies[agent_id]; pos = body.reference_head_object.position
-                shaping = 130 * pos[0] / SCALE; reward = 0
-                if self.prev_shapings.get(agent_id) is not None: reward = shaping - self.prev_shapings[agent_id]
-                self.prev_shapings[agent_id] = shaping; reward += 0.01
-                if agent_id in action_dict and action_dict[agent_id] is not None:
-                    for a in action_dict[agent_id]: reward -= body.TORQUE_PENALTY * 20 * np.clip(np.abs(a), 0, 1)
-                rewards[agent_id] = reward
-        elif self.reward_type == "shared":
-            agent_progress = []
-            for agent_id in active_agents_before_step:
-                pos = self.agent_bodies[agent_id].reference_head_object.position
-                shaping = 130 * pos[0] / SCALE; progress = 0
-                if self.prev_shapings.get(agent_id) is not None: progress = shaping - self.prev_shapings[agent_id]
-                self.prev_shapings[agent_id] = shaping; agent_progress.append(progress)
-            shared_reward = min(agent_progress) if agent_progress else 0
-            total_torque_penalty = 0
-            for agent_id in active_agents_before_step:
-                 body = self.agent_bodies[agent_id]
-                 if agent_id in action_dict and action_dict[agent_id] is not None:
-                    for a in action_dict[agent_id]: total_torque_penalty += body.TORQUE_PENALTY * 20 * np.clip(np.abs(a), 0, 1)
-            avg_torque_penalty = total_torque_penalty / len(active_agents_before_step) if active_agents_before_step else 0
-            final_reward = shared_reward - avg_torque_penalty + 0.01
-            for agent_id in active_agents_before_step: rewards[agent_id] = final_reward
-
+        # Calculate rewards and check for termination conditions
         for agent_id in active_agents_before_step:
-            body = self.agent_bodies[agent_id]; pos = body.reference_head_object.position
+            body = self.agent_bodies.get(agent_id)
+            if not body:
+                continue
+
+            # Calculate rewards (individual or shared)
+            if self.reward_type == "individual":
+                pos = body.reference_head_object.position
+                shaping = 130 * pos[0] / SCALE
+                reward = 0
+                if self.prev_shapings.get(agent_id) is not None:
+                    reward = shaping - self.prev_shapings[agent_id]
+                self.prev_shapings[agent_id] = shaping
+                reward += 0.01
+                if agent_id in action_dict and action_dict[agent_id] is not None:
+                    for a in action_dict[agent_id]:
+                        reward -= body.TORQUE_PENALTY * 20 * np.clip(np.abs(a), 0, 1)
+                rewards[agent_id] = reward
+            
+            # Check for individual agent termination
+            pos = body.reference_head_object.position
             agent_critical_contact = False
             for part in body.body_parts:
                  if isinstance(part.userData, CustomBodyUserData) and part.userData.is_contact_critical and part.userData.has_contact:
@@ -2196,54 +2273,114 @@ class InteractiveMultiAgentParkour(ParametricContinuousParkour, MultiAgentEnv):
                         for contact in part.contacts:
                             if contact.other == self.door: is_door_contact = True; break
                      if not is_door_contact: agent_critical_contact = True; break
+            
             if agent_critical_contact or pos[0] < 0:
-                rewards[agent_id] = -100; self.terminateds[agent_id] = True
-            if pos[0] > (TERRAIN_LENGTH + self.TERRAIN_STARTPAD - TERRAIN_END) * TERRAIN_STEP: self.terminateds[agent_id] = True
+                rewards[agent_id] = -100
+                self.terminateds[agent_id] = True
+            if pos[0] > (TERRAIN_LENGTH + self.TERRAIN_STARTPAD - TERRAIN_END) * TERRAIN_STEP:
+                self.terminateds[agent_id] = True
+            
             if self.terminateds.get(agent_id, False):
-                if agent_id in self.agents: self.agents.remove(agent_id)
+                agents_terminated_this_step.append(agent_id)
+
+        if self.reward_type == "shared":
+            agent_progress = []
+            for agent_id in active_agents_before_step:
+                body = self.agent_bodies.get(agent_id)
+                if body:
+                    pos = body.reference_head_object.position
+                    shaping = 130 * pos[0] / SCALE
+                    progress = 0
+                    if self.prev_shapings.get(agent_id) is not None:
+                        progress = shaping - self.prev_shapings[agent_id]
+                    self.prev_shapings[agent_id] = shaping
+                    agent_progress.append(progress)
+            
+            shared_reward = min(agent_progress) if agent_progress else 0
+            total_torque_penalty = 0
+            for agent_id in active_agents_before_step:
+                 body = self.agent_bodies.get(agent_id)
+                 if body and agent_id in action_dict and action_dict[agent_id] is not None:
+                    for a in action_dict[agent_id]:
+                        total_torque_penalty += body.TORQUE_PENALTY * 20 * np.clip(np.abs(a), 0, 1)
+
+            num_active = len(active_agents_before_step)
+            avg_torque_penalty = total_torque_penalty / num_active if num_active > 0 else 0
+            final_reward = shared_reward - avg_torque_penalty + 0.01
+            for agent_id in active_agents_before_step:
+                rewards[agent_id] = final_reward
         
-        is_truncated = self.ts >= self.horizon; all_done = not self.agents or is_truncated
-        self.terminateds["__all__"] = all_done and not is_truncated; self.truncateds["__all__"] = is_truncated
+        # Safely remove terminated agents from simulation and active list
+        if agents_terminated_this_step:
+            self._destroy_agents_in_simulation(agents_terminated_this_step)
+            for agent_id in agents_terminated_this_step:
+                if agent_id in self.agents:
+                    self.agents.remove(agent_id)
+        
+        is_truncated = self.ts >= self.horizon
+        all_done = not self.agents or is_truncated
+        self.terminateds["__all__"] = all_done and not is_truncated
+        self.truncateds["__all__"] = is_truncated
+        # END FIX
+
         obs = self._get_obs()
         return obs, rewards, self.terminateds, self.truncateds, {}
 
     def _get_obs(self):
-        all_obs = {}; agent_positions = {aid: body.reference_head_object.position for aid, body in self.agent_bodies.items()}
+        all_obs = {}
+        agent_positions = {aid: body.reference_head_object.position for aid, body in self.agent_bodies.items() if body}
+        
         for agent_id in self.agents:
-            body = self.agent_bodies[agent_id]; head = body.reference_head_object
-            vel = head.linearVelocity; my_pos = agent_positions[agent_id]
-            for lidar_callback in self.lidar: lidar_callback.agent_mask_filter = head.fixtures[0].filterData.maskBits
+            body = self.agent_bodies.get(agent_id)
+            if not body: continue # Skip terminated agents
+
+            head = body.reference_head_object
+            vel = head.linearVelocity
+            my_pos = agent_positions[agent_id]
+
+            for lidar_callback in self.lidar:
+                lidar_callback.agent_mask_filter = head.fixtures[0].filterData.maskBits
+
             for i in range(NB_LIDAR):
-                self.lidar[i].fraction = 1.0; self.lidar[i].p1 = head.position
+                self.lidar[i].fraction = 1.0
+                self.lidar[i].p1 = head.position
                 self.lidar[i].p2 = (head.position[0] + math.sin((self.lidar_angle * i / NB_LIDAR) + self.lidar_y_offset) * LIDAR_RANGE,
                                    head.position[1] - math.cos((self.lidar_angle * i / NB_LIDAR) + self.lidar_y_offset) * LIDAR_RANGE)
                 self.world.RayCast(self.lidar[i], self.lidar[i].p1, self.lidar[i].p2)
+
             is_under_water = head.position.y <= self.water_y
             state = [head.angle, 2.0 * head.angularVelocity / FPS, 0.3 * vel.x * (VIEWPORT_W / SCALE) / FPS,
                      0.3 * vel.y * (VIEWPORT_H / SCALE) / FPS, 1.0 if is_under_water else 0.0, 0.0]
             state.extend(body.get_motors_state())
             if body.body_type == BodyTypesEnum.CLIMBER: state.extend(body.get_sensors_state())
+            
             for lidar in self.lidar: state.append(lidar.fraction)
             for lidar in self.lidar:
                 if lidar.is_water_detected: state.append(-1)
                 elif lidar.is_creeper_detected: state.append(1)
                 else: state.append(0)
+            
             original_obs = np.array(state)
             
             other_agents_pos = []
             for other_id in self.possible_agents:
                 if other_id != agent_id:
-                    if other_id in self.agents and other_id in agent_positions:
-                        other_pos = agent_positions[other_id]; relative_pos = (np.array(other_pos) - np.array(my_pos)) / (LIDAR_RANGE * 2)
+                    if other_id in agent_positions: # Check if other agent is still active
+                        other_pos = agent_positions[other_id]
+                        relative_pos = (np.array(other_pos) - np.array(my_pos)) / (LIDAR_RANGE * 2)
                         other_agents_pos.extend(relative_pos.tolist())
-                    else: other_agents_pos.extend([0.0, 0.0])
+                    else:
+                        other_agents_pos.extend([0.0, 0.0])
+
             coop_mechanism_obs = []
             if self.door: coop_mechanism_obs.extend(((np.array(self.door.position) - np.array(my_pos)) / (LIDAR_RANGE*2)).tolist())
             else: coop_mechanism_obs.extend([0.0, 0.0])
             if self.button: coop_mechanism_obs.extend(((np.array(self.button.position) - np.array(my_pos)) / (LIDAR_RANGE*2)).tolist())
             else: coop_mechanism_obs.extend([0.0, 0.0])
+
             final_obs = np.concatenate([original_obs, np.array(other_agents_pos), np.array(coop_mechanism_obs)])
             all_obs[agent_id] = final_obs.astype(np.float32)
+            
         return all_obs
     
     def render(self, draw_lidars=True):
@@ -2272,9 +2409,11 @@ class InteractiveMultiAgentParkour(ParametricContinuousParkour, MultiAgentEnv):
             self.viewer.draw_polygon([(p[0] + self.scroll[0] / 2, p[1]) for p in poly], color=(1, 1, 1))
 
         for obj in self.drawlist:
-            # --- START FIX 2: LOGIC RENDER ĐA TÁC NHÂN ---
+            # Check if object still exists in the physics world before rendering
+            if not obj or not obj.valid:
+                continue
+
             is_an_agent_head = False
-            # Kiểm tra xem obj có phải là đầu của một trong các agent không
             for agent_id, body in self.agent_bodies.items():
                 if body and obj == body.reference_head_object:
                     is_an_agent_head = True
@@ -2284,9 +2423,7 @@ class InteractiveMultiAgentParkour(ParametricContinuousParkour, MultiAgentEnv):
             if hasattr(obj.userData, 'object_type') and obj.userData.object_type == CustomUserDataObjectTypes.BODY_SENSOR and hasattr(obj.userData, 'has_joint') and obj.userData.has_joint:
                 color1, color2 = (1.0, 1.0, 0.0), (1.0, 1.0, 0.0)
             elif is_an_agent_head:
-                # Hàm color_agent_head không tồn tại trong lớp này, nên chúng ta không gọi nó
                 pass
-            # --- END FIX 2 ---
 
             for f in obj.fixtures:
                 trans = f.body.transform
@@ -2612,10 +2749,7 @@ class ParametricContinuousParkour(gym.Env, EzPickle):
         init_x = TERRAIN_STEP*self.TERRAIN_STARTPAD/2
 
         if self.agent_body.body_type == BodyTypesEnum.CLIMBER:
-            # === SỬA ĐỔI Ở ĐÂY ===
-            # Đặt agent ngay sát trần nhà để nó có thể bám ngay lập tức trong lúc reset
-            spawn_margin = 0.5  # Giảm margin từ 1.5 xuống 0.5
-            # =====================
+            spawn_margin = 0.5
             init_y = TERRAIN_HEIGHT + self.ceiling_offset - (self.agent_body.AGENT_HEIGHT / 2) - spawn_margin
         else:
             spawn_buffer = 0.5
@@ -2694,38 +2828,24 @@ class ParametricContinuousParkour(gym.Env, EzPickle):
         self.water_y = self.GROUND_LIMIT; self.nb_steps_outside_water = 0
         self.nb_steps_under_water = 0; self.flipped_counter = 0
 
+        self.stagnation_counter = 0
+        self.last_progress_x = 0
+
         self._generate_terrain(); self._generate_agent()
         self.drawlist = self.terrain + self.agent_body.get_elements_to_render()
         self.lidar = [LidarCallback(self.agent_body.reference_head_object.fixtures[0].filterData.maskBits) for _ in range(NB_LIDAR)]
-        self.prev_pos_x = self.agent_body.reference_head_object.position.x
         
-        # ==============================================================================
-        # === BẮT ĐẦU ĐOẠN CODE MỚI: WARM-UP ĐỂ BÁM VÀO TRẦN ===========================
-        # ==============================================================================
-        # Logic này chỉ chạy cho agent leo trèo
         if self.agent_body.body_type == BodyTypesEnum.CLIMBER:
-            # Tạo một hành động "luôn muốn bám"
             grasp_action = np.ones(self.action_space.shape[0])
-            
-            # Chạy một vài bước mô phỏng để agent tự động bám vào trần/tường
-            for _ in range(50): # Chạy 50 bước là đủ
-                # Kích hoạt hành động bám
+            for _ in range(50):
                 self.agent_body.activate_motors(grasp_action)
                 self.climbing_dynamics.before_step_climbing_dynamics(grasp_action, self.agent_body, self.world)
-                
-                # Chạy mô phỏng vật lý
                 self.world.Step(1.0 / FPS, 6 * 30, 2 * 30)
-
-                # Tạo khớp nối sau khi mô phỏng
                 self.climbing_dynamics.after_step_climbing_dynamics(self.world.contactListener, self.world)
         else:
-            # Logic warm-up cũ cho các agent khác
             WARM_UP_STEPS = 10
             for _ in range(WARM_UP_STEPS):
                 self.world.Step(1.0 / FPS, 6 * 30, 2 * 30)
-        # ==============================================================================
-        # === KẾT THÚC ĐOẠN CODE MỚI ===================================================
-        # ==============================================================================
 
         self.critical_contact = False
         if self.contact_listener: self.contact_listener.Reset()
@@ -2733,6 +2853,9 @@ class ParametricContinuousParkour(gym.Env, EzPickle):
             if hasattr(part.userData, 'has_contact'):
                 part.userData.has_contact = False
                 
+        self.prev_pos_x = self.agent_body.reference_head_object.position.x
+        self.last_progress_x = self.prev_pos_x
+        
         return self._get_state(), {}
 
     def step(self, action):
@@ -2757,43 +2880,53 @@ class ParametricContinuousParkour(gym.Env, EzPickle):
         self.water_dynamics.calculate_forces(self.world.contactListener.fixture_pairs)
         
         state = self._get_state()
-        pos = self.agent_body.reference_head_object.position; vel = self.agent_body.reference_head_object.linearVelocity
+        pos = self.agent_body.reference_head_object.position
+        vel = self.agent_body.reference_head_object.linearVelocity
         self.scroll = [pos[0] - self.rendering_viewer_w / SCALE / 5, pos[1] - self.rendering_viewer_h / SCALE / 2.5]
         
-        shaping = 200 * pos[0] / SCALE; reward = 0
-        if self.prev_shaping is not None: reward = shaping - self.prev_shaping
+        # --- REWARD SHAPING REVISION V2 ---
+        reward = 0
+        
+        # 1. Primary Reward: Progress
+        shaping = 130 * pos[0] / SCALE 
+        if self.prev_shaping is not None:
+            reward += shaping - self.prev_shaping
         self.prev_shaping = shaping
         
-        progress = pos[0] - self.prev_pos_x
-        if progress < 0.001 and vel.x < 0.01: reward -= 0.05
-        self.prev_pos_x = pos[0]; reward += vel.x * 0.1
-        
-        # ==============================================================================
-        # === BẮT ĐẦU ĐOẠN CODE MỚI: THƯỞNG CHO VIỆC BÁM (GRASPING BONUS) ==============
-        # ==============================================================================
-        grasping_bonus = 0.0
-        # Chỉ áp dụng cho các agent có khả năng leo trèo
+        # START CHANGE: Heavily incentivize forward velocity
+        reward += 0.3 * vel.x
+        # END CHANGE
+
+        # 3. Grasping Bonus for climbers
         if self.agent_body.body_type == BodyTypesEnum.CLIMBER:
             num_sensors_touching = 0
             for sensor in self.agent_body.sensors:
-                # userData.has_contact được cập nhật bởi ClimbingContactDetector
                 if sensor.userData.has_contact:
                     num_sensors_touching += 1
-            
-            # Thưởng 0.1 cho mỗi cảm biến đang chạm vào bề mặt bám được
-            grasping_bonus = 0.1 * num_sensors_touching
+            reward += 0.02 * num_sensors_touching 
 
-        reward += grasping_bonus
-        # ==============================================================================
-        # === KẾT THÚC ĐOẠN CODE MỚI ===================================================
-        # ==============================================================================
+        # 4. Stagnation Penalty
+        if abs(pos.x - self.last_progress_x) < 0.01:
+            self.stagnation_counter += 1
+        else:
+            self.stagnation_counter = 0
+            self.last_progress_x = pos.x
+        
+        if self.stagnation_counter > 100:
+            reward -= 0.1
+        # --- END REWARD SHAPING REVISION V2 ---
 
-        for a in action: reward -= self.agent_body.TORQUE_PENALTY * 80 * np.clip(np.abs(a), 0, 1)
+        # Penalties
+        # START CHANGE: Reduce torque penalty to encourage more powerful movements
+        for a in action:
+            reward -= self.agent_body.TORQUE_PENALTY * 40 * np.clip(np.abs(a), 0, 1)
+        # END CHANGE
         
         hull = self.agent_body.body_parts[0]
         if hasattr(hull.userData, 'has_contact') and hull.userData.has_contact and self.agent_body.body_type == BodyTypesEnum.WALKER:
             reward -= HULL_CONTACT_PENALTY
         
+        # Termination conditions
         if abs(state[0]) > 1.5: self.flipped_counter += 1
         else: self.flipped_counter = 0
         
@@ -4984,6 +5117,7 @@ class ClassicBipedalBody(WalkerAbstractBody):
             self.motors.append(joint_motor)
 
 ===== .\TeachMyAgent\environments\envs\bodies\walkers\MillipedeBody.py =====
+# TeachMyAgent/environments/envs/bodies/walkers/MillipedeBody.py
 import numpy as np
 from Box2D.b2 import edgeShape, circleShape, fixtureDef, polygonShape, revoluteJointDef, contactListener
 
@@ -5043,8 +5177,9 @@ class MillipedeBody(WalkerAbstractBody):
         LEG_FD = fixtureDef(shape=polygonShape(box=(self.LEG_W / 2, self.LEG_H / 2)), density=1.0, restitution=0.0, categoryBits=0x20, maskBits=0x000F)
         LOWER_FD = fixtureDef(shape=polygonShape(box=(0.8 * self.LEG_W / 2, self.LEG_H / 2)), density=1.0, restitution=0.0, categoryBits=0x20, maskBits=0x000F)
 
-        # Nâng agent lên một chút
+        # START FIX: Slightly raise the agent to prevent initial ground clipping
         init_y = init_y + 2 / self.SCALE
+        # END FIX
         
         init_x = init_x - MAIN_BODY_BOTTOM_WIDTH / self.SCALE * self.nb_of_bodies / 2
         previous_main_body = None
@@ -5057,7 +5192,6 @@ class MillipedeBody(WalkerAbstractBody):
             self.body_parts.append(main_body)
 
             for i in [-1, +1]:
-                # ... (code tạo chân giữ nguyên) ...
                 leg = world.CreateDynamicBody(position=(main_body_x, init_y - self.LEG_H / 2 - self.LEG_DOWN), fixtures=LEG_FD)
                 leg.color1, leg.color2 = (0.6 - i / 10., 0.3 - i / 10., 0.5 - i / 10.), (0.4 - i / 10., 0.2 - i / 10., 0.3 - i / 10.)
                 rjd = revoluteJointDef(bodyA=main_body, bodyB=leg, anchor=(main_body_x, init_y - self.LEG_DOWN), enableMotor=True, enableLimit=True, maxMotorTorque=self.MOTORS_TORQUE, motorSpeed=i, lowerAngle=-0.8, upperAngle=1.1)
@@ -5075,10 +5209,19 @@ class MillipedeBody(WalkerAbstractBody):
                 joint_motor.userData = CustomMotorUserData(SPEED_KNEE, True, contact_body=lower, angle_correction=1.0)
                 self.motors.append(joint_motor)
 
+            # START FIX: Add a flexible joint between body segments to prevent solver instability
             if previous_main_body is not None:
-                # Khớp nối linh hoạt
-                rjd = revoluteJointDef(bodyA=previous_main_body, bodyB=main_body, anchor=(main_body_x - MAIN_BODY_BOTTOM_WIDTH / self.SCALE / 2, init_y), enableMotor=False, enableLimit=True, lowerAngle=-0.2 * np.pi, upperAngle=0.2 * np.pi)
+                rjd = revoluteJointDef(
+                    bodyA=previous_main_body,
+                    bodyB=main_body,
+                    anchor=(main_body_x - MAIN_BODY_BOTTOM_WIDTH / self.SCALE / 2, init_y),
+                    enableMotor=False,
+                    enableLimit=True,
+                    lowerAngle=-0.2 * np.pi,
+                    upperAngle=0.2 * np.pi,
+                )
                 world.CreateJoint(rjd)
+            # END FIX
             previous_main_body = main_body
 
         self.reference_head_object = previous_main_body
@@ -5823,6 +5966,7 @@ class WheelBody(WalkerAbstractBody):
 
 
 ===== .\TeachMyAgent\environments\envs\bodies\walkers\old\OldBigQuadruBody.py =====
+# TeachMyAgent/environments/envs/bodies/walkers/old/OldBigQuadruBody.py
 # Taken from https://github.com/flowersteam/teachDeepRL
 
 import numpy as np
@@ -5873,8 +6017,7 @@ class OldBigQuadruBody(WalkerAbstractBody):
         self.body_parts.append(hull)
         self.reference_head_object = hull
 
-        # ===== START: PHYSICS FIX =====
-        # Using absolute position calculation for better stability
+        # START FIX: Using absolute position calculation for better physics stability
         for x_anchor_rel in [-0.7, 0.5]: # Relative anchor position on the hull
             absolute_x = init_x + np.interp(x_anchor_rel, [-1,1], [-HULL_BOTTOM_WIDTH / 2 / self.SCALE, HULL_BOTTOM_WIDTH / 2 / self.SCALE])
             for i in [-1, +1]:
@@ -5895,6 +6038,7 @@ class OldBigQuadruBody(WalkerAbstractBody):
                 joint_motor = world.CreateJoint(rjd)
                 joint_motor.userData = CustomMotorUserData(SPEED_KNEE, True, contact_body=lower, angle_correction=1.0)
                 self.motors.append(joint_motor)
+        # END FIX
 
 ===== .\TeachMyAgent\environments\envs\bodies\walkers\old\OldClassicBipedalBody.py =====
 # Taken from https://github.com/flowersteam/teachDeepRL
@@ -6045,19 +6189,20 @@ class OldClassicBipedalBody(WalkerAbstractBody):
 
 
 ===== .\TeachMyAgent\environments\envs\Box2D_dynamics\climbing_dynamics.py =====
+# TeachMyAgent/environments/envs/Box2D_dynamics/climbing_dynamics.py
 import Box2D
 from Box2D.b2 import (edgeShape, circleShape, fixtureDef, polygonShape, revoluteJointDef, contactListener)
 from TeachMyAgent.environments.envs.utils.custom_user_data import CustomUserDataObjectTypes
 
 class ClimbingDynamics(object):
-    # <<< SỬA LỖI: Thêm hàm __init__ để tạo danh sách chứa các khớp cần hủy >>>
+    # START FIX: Add __init__ to create a list for joints that need to be destroyed
     def __init__(self):
         self.joints_to_destroy = []
         
     def before_step_climbing_dynamics(self, actions, body, world):
         '''
         Check if sensors should grasp or release.
-        If releasing and a joint exists, destroy it.
+        If releasing and a joint exists, mark it for destruction.
         '''
         for i in range(len(body.sensors)):
             action_to_check = actions[len(actions) - i - 1]
@@ -6072,19 +6217,21 @@ class ClimbingDynamics(object):
                     joint_to_destroy = next((_joint.joint for _joint in sensor_to_check.joints
                                              if isinstance(_joint.joint, Box2D.b2RevoluteJoint)), None)
                     if joint_to_destroy is not None:
-                        ## <<< SỬA LỖI: Trì hoãn việc hủy khớp thay vì hủy ngay lập tức >>>
-                        # Dòng cũ gây lỗi: world.DestroyJoint(joint_to_destroy)
+                        # START FIX: Defer joint destruction instead of immediate removal
+                        # The old line which caused crashes: world.DestroyJoint(joint_to_destroy)
                         self.joints_to_destroy.append(joint_to_destroy)
+                        # END FIX
 
     def after_step_climbing_dynamics(self, contact_detector, world):
         '''
-        Create climbing joints if sensors are still overlapping after Box2D solver execution.
+        Safely destroy marked joints and create new climbing joints if sensors are still overlapping.
         '''
-        ## <<< SỬA LỖI: Phá hủy các khớp đã được đánh dấu một cách an toàn >>>
-        # Việc này được thực hiện sau world.Step(), nên an toàn.
+        # START FIX: Safely destroy all joints marked for removal after world.Step()
+        # This is the correct and safe way to modify the physics world.
         for joint in self.joints_to_destroy:
             world.DestroyJoint(joint)
-        self.joints_to_destroy.clear() # Dọn dẹp danh sách
+        self.joints_to_destroy.clear() # Clean up the list
+        # END FIX
         
         for sensor in contact_detector.contact_dictionaries:
             if len(contact_detector.contact_dictionaries[sensor]) > 0 and \
@@ -6161,6 +6308,7 @@ class ClimbingContactDetector(contactListener):
         self.contact_dictionaries = {}
 
 ===== .\TeachMyAgent\environments\envs\Box2D_dynamics\water_dynamics.py =====
+# TeachMyAgent/environments/envs/Box2D_dynamics/water_dynamics.py
 import Box2D
 from Box2D.b2 import (edgeShape, circleShape, fixtureDef, polygonShape, revoluteJointDef, contactListener)
 from copy import copy
@@ -6350,13 +6498,12 @@ class WaterContactDetector(contactListener):
         '''Safely remove fixture pairs when contact ends.'''
         fA, fB = contact.fixtureA, contact.fixtureB
 
-        # --- START FIX: Thêm kiểm tra an toàn để tránh crash ---
-        # Safety checks to prevent access violations on destroyed objects
+        # START FIX: Added safety checks to prevent crashes from destroyed bodies
         if not (hasattr(fA, 'body') and hasattr(fB, 'body') and fA.body and fB.body and
                 hasattr(fA.body, 'userData') and hasattr(fB.body, 'userData') and
                 fA.body.userData and fB.body.userData):
             return
-        # --- END FIX ---
+        # END FIX
 
         pair_to_remove = None
         if fA.body.userData.object_type == CustomUserDataObjectTypes.WATER and \
@@ -6372,7 +6519,6 @@ class WaterContactDetector(contactListener):
     def Reset(self):
         '''Clear all stored contacts.'''
         self.fixture_pairs = []
-
 
 ===== .\TeachMyAgent\environments\envs\Box2D_dynamics\__init__.py =====
 
@@ -7327,82 +7473,122 @@ def add_render_args(parser):
         main_pipeline.yaml
     output/
         acl/
-            acl_reach_the_end_run/
+            test_suite_acl/
                 vecnormalize.pkl
                 logs/
                     student/
                         PPO_0/
-                            events.out.tfevents.1761896808.1fb15d854419.1038.1
-                            events.out.tfevents.1761897099.1fb15d854419.1038.2
-                            events.out.tfevents.1761897394.1fb15d854419.1038.3
-                            events.out.tfevents.1761897691.1fb15d854419.1038.4
-                            events.out.tfevents.1761897987.1fb15d854419.1038.5
-                            events.out.tfevents.1761898285.1fb15d854419.1038.6
-                            events.out.tfevents.1761898582.1fb15d854419.1038.7
-                            events.out.tfevents.1761898881.1fb15d854419.1038.8
-                            events.out.tfevents.1761899178.1fb15d854419.1038.9
-                            events.out.tfevents.1761899476.1fb15d854419.1038.10
-                            events.out.tfevents.1761899773.1fb15d854419.1038.11
-                            events.out.tfevents.1761900072.1fb15d854419.1038.12
-                            events.out.tfevents.1761900371.1fb15d854419.1038.13
-                            events.out.tfevents.1761900672.1fb15d854419.1038.14
-                            events.out.tfevents.1761900975.1fb15d854419.1038.15
-                            events.out.tfevents.1761901281.1fb15d854419.1038.16
-                            events.out.tfevents.1761901599.1fb15d854419.1038.17
-                            events.out.tfevents.1761901905.1fb15d854419.1038.18
-                            events.out.tfevents.1761902211.1fb15d854419.1038.19
-                            events.out.tfevents.1761902518.1fb15d854419.1038.20
-                            events.out.tfevents.1761902822.1fb15d854419.1038.21
-                            events.out.tfevents.1761903126.1fb15d854419.1038.22
-                            events.out.tfevents.1761903440.1fb15d854419.1038.23
-                            events.out.tfevents.1761903748.1fb15d854419.1038.24
-                            events.out.tfevents.1761904081.1fb15d854419.1038.25
-                            events.out.tfevents.1761904422.1fb15d854419.1038.26
-                            events.out.tfevents.1761904726.1fb15d854419.1038.27
-                            events.out.tfevents.1761905029.1fb15d854419.1038.28
-                            events.out.tfevents.1761905331.1fb15d854419.1038.29
-                            events.out.tfevents.1761905636.1fb15d854419.1038.30
-                            events.out.tfevents.1761905942.1fb15d854419.1038.31
-                            events.out.tfevents.1761906246.1fb15d854419.1038.32
-                            events.out.tfevents.1761906549.1fb15d854419.1038.33
-                            events.out.tfevents.1761906855.1fb15d854419.1038.34
-                            events.out.tfevents.1761907160.1fb15d854419.1038.35
-                            events.out.tfevents.1761907463.1fb15d854419.1038.36
-                            events.out.tfevents.1761907767.1fb15d854419.1038.37
-                            events.out.tfevents.1761908068.1fb15d854419.1038.38
-                            events.out.tfevents.1761908370.1fb15d854419.1038.39
-                            events.out.tfevents.1761908673.1fb15d854419.1038.40
-                            events.out.tfevents.1761908976.1fb15d854419.1038.41
-                            events.out.tfevents.1761909279.1fb15d854419.1038.42
-                            events.out.tfevents.1761909582.1fb15d854419.1038.43
-                            events.out.tfevents.1761909885.1fb15d854419.1038.44
-                            events.out.tfevents.1761910188.1fb15d854419.1038.45
-                            events.out.tfevents.1761910488.1fb15d854419.1038.46
-                            events.out.tfevents.1761910792.1fb15d854419.1038.47
-                            events.out.tfevents.1761911095.1fb15d854419.1038.48
-                            events.out.tfevents.1761911397.1fb15d854419.1038.49
-                            events.out.tfevents.1761911701.1fb15d854419.1038.50
+                            events.out.tfevents.1762148472.HoangNam.11604.1
+                            events.out.tfevents.1762148480.HoangNam.11604.2
+                            events.out.tfevents.1762148664.HoangNam.23896.1
+                            events.out.tfevents.1762148674.HoangNam.23896.2
+                            events.out.tfevents.1762149025.HoangNam.4404.1
+                            events.out.tfevents.1762149033.HoangNam.4404.2
+                            events.out.tfevents.1762149192.HoangNam.20356.1
+                            events.out.tfevents.1762149201.HoangNam.20356.2
+                            events.out.tfevents.1762149394.HoangNam.12420.1
+                            events.out.tfevents.1762149404.HoangNam.12420.2
+                            events.out.tfevents.1762149635.HoangNam.20680.1
+                            events.out.tfevents.1762149649.HoangNam.20680.2
+                            events.out.tfevents.1762149833.HoangNam.8828.1
+                            events.out.tfevents.1762149842.HoangNam.8828.2
+                            events.out.tfevents.1762150052.HoangNam.7044.1
+                            events.out.tfevents.1762150109.HoangNam.13716.1
+                            events.out.tfevents.1762150121.HoangNam.13716.2
+                            events.out.tfevents.1762150590.HoangNam.25084.1
+                            events.out.tfevents.1762150602.HoangNam.25084.2
                 models/
-                    student_acl_reach_the_end_run_stage_25.zip
-                    student_acl_reach_the_end_run_stage_50.zip
                     student_final.zip
+        marl/
+            test_suite_marl/
+                algorithm_state.pkl
+                class_and_ctor_args.pkl
+                rllib_checkpoint.json
+                env_runner/
+                    class_and_ctor_args.pkl
+                    metadata.json
+                    state.pkl
+                    env_to_module_connector/
+                        class_and_ctor_args.pkl
+                        metadata.json
+                        state.pkl
+                    module_to_env_connector/
+                        class_and_ctor_args.pkl
+                        metadata.json
+                        state.pkl
+                learner_group/
+                    class_and_ctor_args.pkl
+                    metadata.json
+                    state.pkl
+                    learner/
+                        class_and_ctor_args.pkl
+                        metadata.json
+                        state.pkl
+                        rl_module/
+                            class_and_ctor_args.pkl
+                            metadata.json
+                            module_state.pkl
+                            shared_policy/
+                                class_and_ctor_args.pkl
+                                metadata.json
+                                module_state.pkl
         ppo/
-            ppo_reach_the_end_run/
+            test_suite_ppo/
                 vecnormalize.pkl
                 logs/
                     PPO_1/
-                        events.out.tfevents.1761894660.1fb15d854419.1038.0
+                        events.out.tfevents.1762148456.HoangNam.11604.0
+                    PPO_10/
+                        events.out.tfevents.1762150574.HoangNam.25084.0
+                    PPO_2/
+                        events.out.tfevents.1762148647.HoangNam.23896.0
+                    PPO_3/
+                        events.out.tfevents.1762149008.HoangNam.4404.0
+                    PPO_4/
+                        events.out.tfevents.1762149179.HoangNam.20356.0
+                    PPO_5/
+                        events.out.tfevents.1762149382.HoangNam.12420.0
+                    PPO_6/
+                        events.out.tfevents.1762149623.HoangNam.20680.0
+                    PPO_7/
+                        events.out.tfevents.1762149817.HoangNam.8828.0
+                    PPO_8/
+                        events.out.tfevents.1762150036.HoangNam.7044.0
+                    PPO_9/
+                        events.out.tfevents.1762150092.HoangNam.13716.0
                 models/
-                    ppo_model_1000000_steps.zip
-                    ppo_model_1200000_steps.zip
-                    ppo_model_1400000_steps.zip
-                    ppo_model_1600000_steps.zip
-                    ppo_model_1800000_steps.zip
-                    ppo_model_2000000_steps.zip
-                    ppo_model_200000_steps.zip
-                    ppo_model_400000_steps.zip
-                    ppo_model_600000_steps.zip
-                    ppo_model_800000_steps.zip
+                    ppo_model_1024_steps.zip
+                    ppo_model_1280_steps.zip
+                    ppo_model_1536_steps.zip
+                    ppo_model_1792_steps.zip
+                    ppo_model_2048_steps.zip
+                    ppo_model_2304_steps.zip
+                    ppo_model_2560_steps.zip
+                    ppo_model_256_steps.zip
+                    ppo_model_2816_steps.zip
+                    ppo_model_3072_steps.zip
+                    ppo_model_3328_steps.zip
+                    ppo_model_3584_steps.zip
+                    ppo_model_3840_steps.zip
+                    ppo_model_4096_steps.zip
+                    ppo_model_4352_steps.zip
+                    ppo_model_4608_steps.zip
+                    ppo_model_4864_steps.zip
+                    ppo_model_5120_steps.zip
+                    ppo_model_512_steps.zip
+                    ppo_model_5376_steps.zip
+                    ppo_model_5632_steps.zip
+                    ppo_model_5888_steps.zip
+                    ppo_model_6144_steps.zip
+                    ppo_model_6400_steps.zip
+                    ppo_model_6656_steps.zip
+                    ppo_model_6912_steps.zip
+                    ppo_model_7168_steps.zip
+                    ppo_model_7424_steps.zip
+                    ppo_model_7680_steps.zip
+                    ppo_model_768_steps.zip
+                    ppo_model_7936_steps.zip
+                    ppo_model_8192_steps.zip
                     ppo_model_final.zip
     preprocessing/
         convert_weight.py
