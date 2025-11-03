@@ -1,13 +1,13 @@
-# scripts/train_acl.py
 import os
 import sys
 import time
 import argparse
 import numpy as np
 import gymnasium as gym
-from stable_baselines3 import PPO
+from stable_baselines3 import SAC
 from stable_baselines3.common.env_util import make_vec_env
 from stable_baselines3.common.vec_env import VecNormalize
+from stable_baselines3.common.base_class import BaseAlgorithm
 from typing import Callable, Union
 
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -26,13 +26,11 @@ PARAM_SPACE_LIMS = np.array([
 EASY_PARAMS = np.array([0.0, 0.0, 0.0, 0.0])
 
 def get_linear_schedule(initial_value: float) -> Callable[[float], float]:
-    """Returns a linear schedule function for learning rate."""
     def func(progress_remaining: float) -> float:
         return progress_remaining * initial_value
     return func
 
 def parse_schedule(config_value: Union[dict, float, str]):
-    """Safely parses a schedule configuration from a dictionary."""
     if isinstance(config_value, dict):
         schedule_type = config_value.get("type")
         if schedule_type == "linear":
@@ -59,9 +57,6 @@ def add_acl_args(parser: argparse.ArgumentParser) -> argparse.ArgumentParser:
     return parser
 
 def sample_task_params(difficulty_ratio: float) -> dict:
-    """
-    Generates environment parameters based on a two-stage curriculum.
-    """
     min_spacing = 0.05
     max_spacing = 2.0
     max_height = 10.0
@@ -89,7 +84,7 @@ def sample_task_params(difficulty_ratio: float) -> dict:
         "creepers_width": 0.5
     }
 
-def evaluate_student(student_model: PPO, env_id: str, body_type: str, difficulty_ratio: float, num_episodes: int, args: argparse.Namespace, render_mode: str = None, stats_path: str = None) -> float:
+def evaluate_student(student_model: BaseAlgorithm, env_id: str, body_type: str, difficulty_ratio: float, num_episodes: int, args: argparse.Namespace, render_mode: str = None, stats_path: str = None) -> float:
     total_rewards = 0.0
     vec_eval_env = None
     try:
@@ -114,7 +109,7 @@ def evaluate_student(student_model: PPO, env_id: str, body_type: str, difficulty
                 action, _ = student_model.predict(obs, deterministic=True)
                 obs, reward, done_vec, info = vec_eval_env.step(action)
                 done = done_vec[0]
-                if done: # Use the final info dict to get the true episode reward
+                if done:
                     episode_reward = info[0].get('episode', {}).get('r', 0)
             total_rewards += episode_reward
     finally:
@@ -136,19 +131,20 @@ def main(args: argparse.Namespace) -> str:
     os.makedirs(log_dir, exist_ok=True)
 
     print(f"\n{'=' * 60}\nStarting ACL training for env '{args.env}' with body '{args.body}'")
+    print(f"Using STUDENT ALGORITHM: SAC")
     print(f"Output directory: {output_base}\n{'=' * 60}")
 
     render_mode = "human" if args.render else None
     
-    # --- PPO Hyperparameters ---
-    ppo_kwargs = getattr(args, 'ppo_config', {})
-    if 'learning_rate_schedule' in ppo_kwargs:
-        ppo_kwargs['learning_rate'] = parse_schedule(ppo_kwargs.pop('learning_rate_schedule'))
-    if 'clip_range_schedule' in ppo_kwargs:
-        ppo_kwargs['clip_range'] = parse_schedule(ppo_kwargs.pop('clip_range_schedule'))
-    print("Using PPO hyperparameters for student:", ppo_kwargs)
+    AGENT_CLASS = SAC
     
-    # --- ACL Main Loop ---
+    agent_kwargs = getattr(args, 'ppo_config', {}) # Keep arg name for yaml compatibility
+    if 'learning_rate_schedule' in agent_kwargs:
+        agent_kwargs['learning_rate'] = parse_schedule(agent_kwargs.pop('learning_rate_schedule'))
+    if 'clip_range_schedule' in agent_kwargs:
+        agent_kwargs.pop('clip_range_schedule') # SAC does not use clip_range
+    print("Using SAC hyperparameters for student:", agent_kwargs)
+    
     difficulty_ratio = 0.0
     student = None
     final_path = os.path.join(model_dir, "student_final.zip")
@@ -160,19 +156,16 @@ def main(args: argparse.Namespace) -> str:
             print(f"\n--- Stage {stage}/{args.total_stages} | Difficulty: {difficulty_ratio:.3f} ---")
             print(f"Task parameters: {task_params}")
 
-            # START FIX: Implement Clean Reset Logic
-            # 1. Save current model and environment stats (if they exist)
+            # START: Implement Clean Reset Logic
             if student:
                 temp_model_path = os.path.join(model_dir, "student_temp.zip")
                 student.save(temp_model_path)
                 student.get_env().save(stats_path)
-                # Close the old environment completely
                 student.get_env().close()
-                del student # Free up memory
+                del student
             else:
                 temp_model_path = None
 
-            # 2. Create a brand new vectorized environment with the new task parameters
             n_envs = 1 if args.render else args.n_envs
             vec_env = make_vec_env(
                 lambda: build_and_setup_env(args.env, args.body, task_params, args=args),
@@ -180,7 +173,6 @@ def main(args: argparse.Namespace) -> str:
                 seed=getattr(args, 'seed', None)
             )
             
-            # 3. Load old normalization stats if they exist, otherwise create new ones
             if os.path.exists(stats_path):
                 print(f"Loading VecNormalize stats from: {stats_path}")
                 vec_env = VecNormalize.load(stats_path, vec_env)
@@ -188,33 +180,25 @@ def main(args: argparse.Namespace) -> str:
                 print("Creating new VecNormalize stats.")
                 vec_env = VecNormalize(vec_env, norm_obs=True, norm_reward=True, clip_obs=10.)
 
-            # 4. Create a new PPO model and load the weights from the previous stage
             if temp_model_path and os.path.exists(temp_model_path):
                 print(f"Loading model weights from previous stage: {temp_model_path}")
-                student = PPO.load(temp_model_path, env=vec_env, tensorboard_log=os.path.join(log_dir, "student"), device="auto")
-                # ### START CHANGE: FIX AttributeError ###
-                # The following line is removed because the `logger` attribute is not exposed in the same way
-                # in newer versions of SB3, and the logger is already correctly configured by PPO.load().
-                # student.set_logger(student.logger)
-                # ### END CHANGE ###
+                student = AGENT_CLASS.load(temp_model_path, env=vec_env, tensorboard_log=os.path.join(log_dir, "student"), device="auto")
             else:
-                print("Initializing new PPO model for the first stage.")
-                student = PPO("MlpPolicy", vec_env, verbose=0, tensorboard_log=os.path.join(log_dir, "student"), device="auto", **ppo_kwargs)
-            # END FIX
+                print("Initializing new SAC model for the first stage.")
+                student = AGENT_CLASS("MlpPolicy", vec_env, verbose=0, tensorboard_log=os.path.join(log_dir, "student"), device="auto", **agent_kwargs)
+            # END
 
             student.learn(total_timesteps=args.student_steps_per_stage, reset_num_timesteps=False, progress_bar=True)
             
-            # Save the normalization stats from the current training environment
             student.get_env().save(stats_path)
             
             print(f"Evaluating agent over {args.eval_episodes} episodes...")
-            # During evaluation, we need a separate, non-training environment
             eval_model_path = os.path.join(model_dir, "student_eval_temp.zip")
             student.save(eval_model_path)
-            eval_model = PPO.load(eval_model_path, device="auto")
+            eval_model = AGENT_CLASS.load(eval_model_path, device="auto")
             
             avg_reward = evaluate_student(eval_model, args.env, args.body, difficulty_ratio, args.eval_episodes, args, render_mode=render_mode, stats_path=stats_path)
-            del eval_model # Clean up
+            del eval_model
             
             print(f"Average reward = {avg_reward:.2f}")
             if avg_reward > args.mastery_threshold:

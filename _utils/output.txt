@@ -149,12 +149,20 @@ if __name__ == '__main__':
     demo_parser.set_defaults(func=lambda args: run_task(demo_script.main, args, "Environment Demo"))
     
     check_parser = subparsers.add_parser('check_envs', help="Run comprehensive checks on all environments and bodies."); check_all_script.add_check_all_args(check_parser)
+    # ### START CHANGE: FIX AttributeError ###
+    check_parser.add_argument('--seed', type=int, default=None, help="Global seed for reproducibility.")
+    # ### END CHANGE ###
     check_parser.set_defaults(func=lambda args: run_task(check_all_script.main, args, "Environment Check"))
     
     test_parser = subparsers.add_parser('test_suite', help="Run the quick, integrated project test suite.")
+    # ### START CHANGE: FIX AttributeError ###
+    test_parser.add_argument('--seed', type=int, default=None, help="Global seed for reproducibility.")
+    # ### END CHANGE ###
     test_parser.set_defaults(func=test_suite_script.main)
     
     convert_parser = subparsers.add_parser('convert_weights', help="Convert legacy TF1 weights to PyTorch.")
+    # Add seed for consistency, although this script doesn't use it.
+    convert_parser.add_argument('--seed', type=int, default=None, help="Global seed for reproducibility.")
     convert_parser.set_defaults(func=convert_weight.convert_tf1_to_pytorch)
 
     args = parser.parse_args()
@@ -1325,9 +1333,6 @@ def evaluate_student(student_model: PPO, env_id: str, body_type: str, difficulty
         
         for i in range(num_episodes):
             print(f"  Evaluating Episode {i + 1}/{num_episodes}...")
-            # START FIX: The evaluation environment is already recreated for each episode via make_vec_env,
-            # so we don't need to call set_environment again. This makes it cleaner.
-            # END FIX
             obs = vec_eval_env.reset()
             done = False
             episode_reward = 0.0
@@ -1415,8 +1420,11 @@ def main(args: argparse.Namespace) -> str:
             if temp_model_path and os.path.exists(temp_model_path):
                 print(f"Loading model weights from previous stage: {temp_model_path}")
                 student = PPO.load(temp_model_path, env=vec_env, tensorboard_log=os.path.join(log_dir, "student"), device="auto")
-                # Reset timesteps to ensure tensorboard logs correctly for the new stage
-                student.set_logger(student.logger) 
+                # ### START CHANGE: FIX AttributeError ###
+                # The following line is removed because the `logger` attribute is not exposed in the same way
+                # in newer versions of SB3, and the logger is already correctly configured by PPO.load().
+                # student.set_logger(student.logger)
+                # ### END CHANGE ###
             else:
                 print("Initializing new PPO model for the first stage.")
                 student = PPO("MlpPolicy", vec_env, verbose=0, tensorboard_log=os.path.join(log_dir, "student"), device="auto", **ppo_kwargs)
@@ -1552,17 +1560,27 @@ def get_env_creator(mode):
     if mode == "cooperative": base_env_creator_func = lambda config: MultiAgentParkour(config=config)
     elif mode == "interactive": base_env_creator_func = lambda config: InteractiveMultiAgentParkour(config=config)
     else: raise ValueError(f"Invalid mode: '{mode}'.")
+    
+    # START FIX: Wrap the environment to clip observations and prevent NaN/inf values from crashing workers.
     def wrapped_env_creator(config):
         base_env = base_env_creator_func(config)
+        
+        # This function will be applied to the observation from the environment at each step.
         def clip_multi_agent_obs(obs_dict):
             return {agent_id: np.clip(agent_obs, -10.0, 10.0) for agent_id, agent_obs in obs_dict.items()}
+
+        # We must also update the observation space to reflect the clipped values.
         original_obs_space = base_env.observation_space
         clipped_sub_spaces = {}
         if isinstance(original_obs_space, gym.spaces.Dict):
              for agent_id, sub_space in original_obs_space.items():
                 clipped_sub_spaces[agent_id] = gym.spaces.Box(low=-10.0, high=10.0, shape=sub_space.shape, dtype=sub_space.dtype)
+        
         clipped_observation_space = gym.spaces.Dict(clipped_sub_spaces)
+        
+        # Return the original environment wrapped with our observation transformation.
         return TransformObservation(base_env, clip_multi_agent_obs, clipped_observation_space)
+    # END FIX
     return wrapped_env_creator
 
 def main(args: argparse.Namespace) -> Optional[str]:
@@ -2410,7 +2428,7 @@ class InteractiveMultiAgentParkour(ParametricContinuousParkour, MultiAgentEnv):
 
         for obj in self.drawlist:
             # Check if object still exists in the physics world before rendering
-            if not obj or not obj.valid:
+            if not obj:
                 continue
 
             is_an_agent_head = False
@@ -2590,33 +2608,28 @@ class ContactDetector(WaterContactDetector, ClimbingContactDetector):
         self.env = env
 
     def BeginContact(self, contact):
+        fA, fB = contact.fixtureA, contact.fixtureB
+        if (not hasattr(fA, 'body') or not hasattr(fB, 'body') or
+                fA.body is None or fB.body is None or
+                not hasattr(fA.body, 'userData') or not hasattr(fB.body, 'userData') or
+                fA.body.userData is None or fB.body.userData is None or
+                not hasattr(fA.body.userData, 'object_type') or
+                not hasattr(fB.body.userData, 'object_type')):
+            return
+
         bodies = [contact.fixtureA.body, contact.fixtureB.body]
 
-        if any([hasattr(body.userData, 'object_type') and body.userData.object_type == CustomUserDataObjectTypes.WATER for body in bodies]):
+        if any([body.userData.object_type == CustomUserDataObjectTypes.WATER for body in bodies]):
             WaterContactDetector.BeginContact(self, contact)
-        elif any([hasattr(body.userData, 'object_type') and body.userData.object_type == CustomUserDataObjectTypes.BODY_SENSOR for body in bodies]):
-            ClimbingContactDetector.BeginContact(self, contact)
-        else:
-            if contact.fixtureA.sensor or contact.fixtureB.sensor:
-                return
-            for idx, body in enumerate(bodies):
-                if (hasattr(body.userData, 'object_type') and
-                    body.userData.object_type == CustomUserDataObjectTypes.BODY_OBJECT and
-                    body.userData.check_contact):
-                    body.userData.has_contact = True
-                    other_body = bodies[(idx + 1) % 2]
-                    if body.userData.is_contact_critical and \
-                            not (hasattr(other_body.userData, 'object_type') and
-                                 other_body.userData.object_type in [CustomUserDataObjectTypes.GRIP_TERRAIN, CustomUserDataObjectTypes.SENSOR_GRIP_TERRAIN] and
-                                 self.env.agent_body.body_type == BodyTypesEnum.CLIMBER):
-                        self.env.critical_contact = True
-
+            
     def EndContact(self, contact):
         fA, fB = contact.fixtureA, contact.fixtureB
         if (not hasattr(fA, 'body') or not hasattr(fB, 'body') or
                 fA.body is None or fB.body is None or
                 not hasattr(fA.body, 'userData') or not hasattr(fB.body, 'userData') or
-                fA.body.userData is None or fB.body.userData is None):
+                fA.body.userData is None or fB.body.userData is None or
+                not hasattr(fA.body.userData, 'object_type') or
+                not hasattr(fB.body.userData, 'object_type')):
             return
 
         bodies = [fA.body, fB.body]
@@ -7497,8 +7510,18 @@ def add_render_args(parser):
                             events.out.tfevents.1762150121.HoangNam.13716.2
                             events.out.tfevents.1762150590.HoangNam.25084.1
                             events.out.tfevents.1762150602.HoangNam.25084.2
+                            events.out.tfevents.1762150881.HoangNam.19260.1
+                            events.out.tfevents.1762151057.HoangNam.6912.1
+                            events.out.tfevents.1762151369.HoangNam.25784.1
+                            events.out.tfevents.1762151741.HoangNam.23328.1
+                            events.out.tfevents.1762151949.HoangNam.17756.1
+                            events.out.tfevents.1762152188.HoangNam.10796.1
+                            events.out.tfevents.1762152202.HoangNam.10796.2
                 models/
+                    student_eval_temp.zip
                     student_final.zip
+                    student_temp.zip
+                    student_test_suite_acl_stage_2.zip
         marl/
             test_suite_marl/
                 algorithm_state.pkl
@@ -7540,6 +7563,18 @@ def add_render_args(parser):
                         events.out.tfevents.1762148456.HoangNam.11604.0
                     PPO_10/
                         events.out.tfevents.1762150574.HoangNam.25084.0
+                    PPO_11/
+                        events.out.tfevents.1762150870.HoangNam.19260.0
+                    PPO_12/
+                        events.out.tfevents.1762151033.HoangNam.6912.0
+                    PPO_13/
+                        events.out.tfevents.1762151350.HoangNam.25784.0
+                    PPO_14/
+                        events.out.tfevents.1762151726.HoangNam.23328.0
+                    PPO_15/
+                        events.out.tfevents.1762151933.HoangNam.17756.0
+                    PPO_16/
+                        events.out.tfevents.1762152173.HoangNam.10796.0
                     PPO_2/
                         events.out.tfevents.1762148647.HoangNam.23896.0
                     PPO_3/
