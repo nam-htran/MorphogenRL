@@ -29,22 +29,29 @@ def add_ppo_args(parser: argparse.ArgumentParser) -> argparse.ArgumentParser:
     parser.add_argument('--horizon', type=int, default=5000)
     return parser
 
+# START CHANGE: Simplify schedule parsing to align with current SB3 and YAML usage
 def get_linear_schedule(initial_value: float) -> Callable[[float], float]:
-    """Returns a linear schedule function for learning rate."""
+    """Returns a linear schedule function."""
     def func(progress_remaining: float) -> float:
         return progress_remaining * initial_value
     return func
 
-def parse_schedule(config_value: Union[dict, float, str]):
-    """Safely parses a schedule configuration from a dictionary."""
+def parse_schedule(config_value: Union[dict, float]):
+    """
+    Parses a schedule configuration.
+    If it's a dict, create a schedule function.
+    If it's a float, return it directly.
+    """
     if isinstance(config_value, dict):
         schedule_type = config_value.get("type")
         if schedule_type == "linear":
-            initial_val = float(config_value["initial_value"])
+            initial_val = float(config_value.get("initial_value", 0.0))
             return get_linear_schedule(initial_val)
         else:
             raise ValueError(f"Unknown schedule type: {schedule_type}")
+    # If it's already a float or can be converted to one, just return it.
     return float(config_value)
+# END CHANGE
 
 def main(args: argparse.Namespace) -> str:
     output_base_dir = f"output/ppo/{args.run_id}"
@@ -57,8 +64,13 @@ def main(args: argparse.Namespace) -> str:
     if args.render:
         args.n_envs = 1
 
+    # START CHANGE: Pass reward shaping params to the environment constructor
+    reward_shaping_params = getattr(args, 'reward_shaping', {})
+    
     user_params = collect_env_params(args.env, args)
-    env_lambda = lambda: build_and_setup_env(args.env, args.body, user_params, render_mode=train_render_mode, args=args)
+    # The environment will receive reward_shaping_params through kwargs (**reward_shaping_params)
+    env_lambda = lambda: build_and_setup_env(args.env, args.body, user_params, render_mode=train_render_mode, args=args, **reward_shaping_params)
+    # END CHANGE
     
     print("Creating vectorized and normalized environment...")
     env = make_vec_env(env_lambda, n_envs=args.n_envs, seed=getattr(args, 'seed', None))
@@ -70,16 +82,16 @@ def main(args: argparse.Namespace) -> str:
     
     ppo_kwargs = getattr(args, 'ppo_config', {})
     
-    if 'learning_rate_schedule' in ppo_kwargs:
-        ppo_kwargs['learning_rate'] = parse_schedule(ppo_kwargs.pop('learning_rate_schedule'))
-    if 'clip_range_schedule' in ppo_kwargs:
-        ppo_kwargs['clip_range'] = parse_schedule(ppo_kwargs.pop('clip_range_schedule'))
+    # START CHANGE: Correctly handle both direct float and schedule dict for learning_rate
+    if 'learning_rate' in ppo_kwargs:
+        ppo_kwargs['learning_rate'] = parse_schedule(ppo_kwargs.pop('learning_rate'))
+    if 'clip_range' in ppo_kwargs:
+         ppo_kwargs['clip_range'] = parse_schedule(ppo_kwargs.pop('clip_range'))
+    # END CHANGE
 
     print("Using PPO hyperparameters:", ppo_kwargs)
 
-    # START FIX: Add device="auto" to resolve GPU warnings and improve performance
     model = PPO("MlpPolicy", env, verbose=1, tensorboard_log=os.path.join(output_base_dir, "logs"), device="auto", **ppo_kwargs)
-    # END FIX
     
     checkpoint_callback = CheckpointCallback(
         save_freq=max(args.save_freq // args.n_envs, 1),

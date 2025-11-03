@@ -18,13 +18,12 @@ from scripts import check_all as check_all_script
 from utils.seeding import set_seed
 
 def ray_init_and_run(func, args):
-    """Initializes Ray and runs a function that requires it."""
     if not ray.is_initialized():
         print("Initializing Ray...")
         ray.init(ignore_reinit_error=True)
     
     try:
-        func(args)
+        return func(args) # START CHANGE: Return result from function
     finally:
         if ray.is_initialized():
             ray.shutdown()
@@ -64,13 +63,22 @@ def run_pipeline(args: SimpleNamespace):
     config = load_config(args.config)
     watch_config = config.get('WATCH', {})
     
+    # START CHANGE: Transfer Learning Logic
+    pipeline_settings = config.get('PIPELINE_SETTINGS', {})
+    transfer_learning_enabled = pipeline_settings.get('transfer_learning', False)
+    pretrained_model_path = None
+    if transfer_learning_enabled:
+        print_header("TRANSFER LEARNING IS ENABLED IN PIPELINE")
+    # END CHANGE
+    
     default_params = {
         'render': False, 'width': args.width, 'height': args.height, 'fullscreen': args.fullscreen,
         'horizon': 3000, 'roughness': None, 'stump_height': None,
         'stump_width': None, 'obstacle_spacing': None, 'input_vector': None,
         'water_level': None, 'creepers_width': None, 'creepers_height': None,
         'creepers_spacing': None, 'check_env': False, 'shared_policy': False,
-        'use_cc': False, 'seed': args.seed
+        'use_cc': False, 'seed': args.seed,
+        'pretrained_model_path': None # Add default
     }
     
     for stage_name in ['PPO', 'ACL', 'MARL']:
@@ -79,6 +87,13 @@ def run_pipeline(args: SimpleNamespace):
             continue
         
         final_config = {**default_params, **stage_config}
+        
+        # START CHANGE: Inject pre-trained model path
+        if transfer_learning_enabled and pretrained_model_path:
+            final_config['pretrained_model_path'] = pretrained_model_path
+            print(f"INFO: Stage '{stage_name}' will start from pre-trained model: {pretrained_model_path}")
+        # END CHANGE
+            
         stage_args = SimpleNamespace(**final_config)
 
         checkpoint_path = None
@@ -87,7 +102,14 @@ def run_pipeline(args: SimpleNamespace):
         elif stage_name == 'ACL':
             checkpoint_path = run_task(train_acl.main, stage_args, "ACL Training")
         elif stage_name == 'MARL':
-            checkpoint_path = run_task(train_marl.main, stage_args, f"MARL Training ({stage_args.mode})")
+            # MARL needs Ray, so we wrap it
+            checkpoint_path = ray_init_and_run(train_marl.main, stage_args)
+
+        # START CHANGE: Update pre-trained path for the next stage
+        if transfer_learning_enabled and checkpoint_path:
+            pretrained_model_path = checkpoint_path
+            print(f"INFO: Stage '{stage_name}' finished. Model for next stage is now: {pretrained_model_path}")
+        # END CHANGE
 
         if watch_config.get('enabled', False) and checkpoint_path:
             if stage_name == 'MARL':
@@ -110,8 +132,8 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser(description="Main entry point for TeachMyAgent.", formatter_class=argparse.RawTextHelpFormatter)
     subparsers = parser.add_subparsers(dest='command', required=True, help="Available commands")
 
-    ray_commands = ['pipeline', 'train', 'test_suite']
-
+    ray_commands = ['pipeline-marl-stage'] # Internal command for pipeline
+    
     pipeline_parser = subparsers.add_parser('pipeline', help="Run the full training pipeline from a YAML config file.")
     pipeline_parser.add_argument('--config', type=str, default='configs/main_pipeline.yaml', help="Path to the main pipeline configuration file.")
     pipeline_parser.add_argument('--width', type=int, help="Override window width for watching.")
@@ -131,8 +153,10 @@ if __name__ == '__main__':
     acl_parser.set_defaults(func=lambda args: run_task(train_acl.main, args, "ACL Training"))
     
     marl_parser = train_subparsers.add_parser('marl', help="Train MARL (multi-agent)."); train_marl.add_marl_args(marl_parser)
-    marl_parser.set_defaults(func=lambda args: run_task(train_marl.main, args, "MARL Training"))
-
+    # START CHANGE: MARL is now handled by ray_init_and_run
+    marl_parser.set_defaults(func=lambda args: ray_init_and_run(train_marl.main, args))
+    # END CHANGE
+    
     eval_parser = subparsers.add_parser('evaluate', help="Evaluate a trained single-agent model.")
     evaluate_script.add_evaluation_args(eval_parser)
     eval_parser.add_argument('--seed', type=int, default=None, help="Global seed for reproducibility.")
@@ -147,26 +171,19 @@ if __name__ == '__main__':
     demo_parser.set_defaults(func=lambda args: run_task(demo_script.main, args, "Environment Demo"))
     
     check_parser = subparsers.add_parser('check_envs', help="Run comprehensive checks on all environments and bodies."); check_all_script.add_check_all_args(check_parser)
-    # ### START CHANGE: FIX AttributeError ###
     check_parser.add_argument('--seed', type=int, default=None, help="Global seed for reproducibility.")
-    # ### END CHANGE ###
     check_parser.set_defaults(func=lambda args: run_task(check_all_script.main, args, "Environment Check"))
     
     test_parser = subparsers.add_parser('test_suite', help="Run the quick, integrated project test suite.")
-    # ### START CHANGE: FIX AttributeError ###
     test_parser.add_argument('--seed', type=int, default=None, help="Global seed for reproducibility.")
-    # ### END CHANGE ###
     test_parser.set_defaults(func=test_suite_script.main)
     
     convert_parser = subparsers.add_parser('convert_weights', help="Convert legacy TF1 weights to PyTorch.")
-    # Add seed for consistency, although this script doesn't use it.
     convert_parser.add_argument('--seed', type=int, default=None, help="Global seed for reproducibility.")
     convert_parser.set_defaults(func=convert_weight.convert_tf1_to_pytorch)
 
     args = parser.parse_args()
     
-    # START CHANGE: Smart seed handling
-    # Priority: Command line > YAML config > No seed
     seed = args.seed
     if args.command == 'pipeline' and seed is None:
         try:
@@ -178,29 +195,30 @@ if __name__ == '__main__':
                     if seed_from_config is not None:
                         print(f"INFO: Using seed '{seed_from_config}' from '{stage_name}' configuration in '{args.config}'.")
                         seed = seed_from_config
-                        break # Use the first one found
+                        break 
         except Exception as e:
             print(f"WARNING: Could not load config to check for seed. Reason: {e}")
     
     if seed is not None:
         print(f"INFO: Setting global seed to {seed}.")
         set_seed(seed)
-        # Ensure the args object carries the definitive seed value
         args.seed = seed
-    # END CHANGE
     
     try:
-        if args.command in ray_commands:
-            ray_init_and_run(args.func, args)
+        # START CHANGE: Simplified main execution logic
+        if hasattr(args, 'func'):
+             is_no_args_func = 'args' not in args.func.__code__.co_varnames and args.func.__code__.co_argcount == 0
+             if is_no_args_func:
+                  run_task(args.func, None, args.command.upper())
+             else:
+                  # Ray-dependent functions are now handled by their own wrappers
+                  if args.command == 'pipeline':
+                      run_pipeline(args)
+                  else:
+                      args.func(args)
         else:
-            if hasattr(args, 'func'):
-                is_no_args_func = 'args' not in args.func.__code__.co_varnames and args.func.__code__.co_argcount == 0
-                if is_no_args_func:
-                     run_task(args.func, None, args.command.upper())
-                else:
-                     run_task(args.func, args, args.command.upper())
-            else:
-                parser.print_help()
+            parser.print_help()
+        # END CHANGE
     finally:
         if ray.is_initialized():
             ray.shutdown()

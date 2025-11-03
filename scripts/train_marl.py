@@ -14,7 +14,8 @@ from gymnasium.wrappers import TransformObservation
 import numpy as np
 import gymnasium as gym
 import TeachMyAgent.environments
-
+import torch
+from stable_baselines3 import PPO, SAC # Import SB3 models for loading
 
 from ray.rllib.utils.metrics import (
     ENV_RUNNER_RESULTS,
@@ -28,6 +29,65 @@ sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import TeachMyAgent.environments
 from TeachMyAgent.environments.envs.multi_agent_parametric_parkour import MultiAgentParkour
 from TeachMyAgent.environments.envs.interactive_multi_agent_parkour import InteractiveMultiAgentParkour
+
+def load_sb3_weights_into_rllib_module(rllib_module, sb3_model_path):
+    """
+    Loads weights from a saved SB3 model into an RLlib RLModule.
+    This is a best-effort transfer and assumes similar MLP architectures.
+    """
+    print(f"Attempting to transfer weights from SB3 model: {sb3_model_path}")
+    try:
+        # Auto-detect model type based on file name content as a heuristic
+        if "SAC" in sb3_model_path.upper():
+            sb3_model = SAC.load(sb3_model_path, device='cpu')
+            sb3_policy_state_dict = sb3_model.policy.state_dict()
+            print("Loaded SB3 SAC model for weight transfer.")
+        else:
+            sb3_model = PPO.load(sb3_model_path, device='cpu')
+            sb3_policy_state_dict = sb3_model.policy.state_dict()
+            print("Loaded SB3 PPO model for weight transfer.")
+            
+    except Exception as e:
+        print(f"ERROR: Could not load SB3 model. Aborting weight transfer. Error: {e}")
+        return
+
+    rllib_module_state_dict = rllib_module.state_dict()
+
+    # This mapping is crucial and fragile. It assumes the default [64, 64] MLP architecture
+    # for both SB3 (MlpPolicy) and RLlib (as configured in the YAML).
+    key_mapping = {
+        # Policy Network (Actor)
+        "mlp_extractor.policy_net.0.weight": "pi_encoder._nets.0.weight",
+        "mlp_extractor.policy_net.0.bias": "pi_encoder._nets.0.bias",
+        "mlp_extractor.policy_net.2.weight": "pi_encoder._nets.1.weight",
+        "mlp_extractor.policy_net.2.bias": "pi_encoder._nets.1.bias",
+        # Value Network (Critic)
+        "mlp_extractor.value_net.0.weight": "vf_encoder._nets.0.weight",
+        "mlp_extractor.value_net.0.bias": "vf_encoder._nets.0.bias",
+        "mlp_extractor.value_net.2.weight": "vf_encoder._nets.1.weight",
+        "mlp_extractor.value_net.2.bias": "vf_encoder._nets.1.bias",
+        # Output Heads
+        "action_net.weight": "_action_dist_layer.weight",
+        "action_net.bias": "_action_dist_layer.bias",
+        "value_net.weight": "_value_layer.weight",
+        "value_net.bias": "_value_layer.bias",
+    }
+    
+    new_rllib_state_dict = rllib_module_state_dict.copy()
+    weights_transferred = 0
+    for sb3_key, rllib_key in key_mapping.items():
+        if sb3_key in sb3_policy_state_dict and rllib_key in new_rllib_state_dict:
+            if sb3_policy_state_dict[sb3_key].shape == new_rllib_state_dict[rllib_key].shape:
+                new_rllib_state_dict[rllib_key] = sb3_policy_state_dict[sb3_key]
+                weights_transferred += 1
+            else:
+                print(f"  - Shape mismatch for key '{rllib_key}'. SB3 shape: {sb3_policy_state_dict[sb3_key].shape}, RLlib shape: {new_rllib_state_dict[rllib_key].shape}. Skipping.")
+
+    if weights_transferred > 0:
+        rllib_module.load_state_dict(new_rllib_state_dict)
+        print(f"Successfully transferred {weights_transferred} weight tensors from SB3 to RLlib module.")
+    else:
+        print("WARNING: No weights were transferred. Check network architectures in YAML and key mappings in train_marl.py.")
 
 def add_marl_args(parser: argparse.ArgumentParser) -> argparse.ArgumentParser:
     parser.add_argument("--mode", type=str, default="interactive", choices=["cooperative", "interactive"], help="Environment mode.")
@@ -46,6 +106,7 @@ def add_marl_args(parser: argparse.ArgumentParser) -> argparse.ArgumentParser:
     parser.add_argument("--reward-type", type=str, default="individual", choices=["individual", "shared"], help="MARL reward structure.")
     parser.add_argument("--shared-policy", action="store_true", help="Use a single shared policy for all agents.")
     parser.add_argument("--use-cc", action="store_true", help="Use a Centralized Critic.")
+    parser.add_argument("--pretrained_model_path", type=str, default=None, help="Path to a pre-trained SB3 model to start MARL from.")
     return parser
 
 def deep_update(original, new_dict):
@@ -85,15 +146,12 @@ def get_env_creator(mode):
     elif mode == "interactive": base_env_creator_func = lambda config: InteractiveMultiAgentParkour(config=config)
     else: raise ValueError(f"Invalid mode: '{mode}'.")
     
-    # START FIX: Wrap the environment to clip observations and prevent NaN/inf values from crashing workers.
     def wrapped_env_creator(config):
         base_env = base_env_creator_func(config)
         
-        # This function will be applied to the observation from the environment at each step.
         def clip_multi_agent_obs(obs_dict):
             return {agent_id: np.clip(agent_obs, -10.0, 10.0) for agent_id, agent_obs in obs_dict.items()}
 
-        # We must also update the observation space to reflect the clipped values.
         original_obs_space = base_env.observation_space
         clipped_sub_spaces = {}
         if isinstance(original_obs_space, gym.spaces.Dict):
@@ -102,9 +160,7 @@ def get_env_creator(mode):
         
         clipped_observation_space = gym.spaces.Dict(clipped_sub_spaces)
         
-        # Return the original environment wrapped with our observation transformation.
         return TransformObservation(base_env, clip_multi_agent_obs, clipped_observation_space)
-    # END FIX
     return wrapped_env_creator
 
 def main(args: argparse.Namespace) -> Optional[str]:
@@ -173,6 +229,22 @@ def main(args: argparse.Namespace) -> Optional[str]:
     else:
         print(f"Starting a single MARL training run for {args.iterations} iterations...")
         algo = config.build()
+        
+        pretrained_path = getattr(args, 'pretrained_model_path', None)
+        if pretrained_path and os.path.exists(pretrained_path):
+            if hasattr(args, 'shared_policy') and args.shared_policy:
+                print("\n" + "="*80)
+                print("TRANSFER LEARNING: Loading weights from SB3 model into shared policy...")
+                module_to_load = algo.get_module("shared_policy")
+                load_sb3_weights_into_rllib_module(module_to_load, pretrained_path)
+                
+                print("Syncing transferred weights to all rollout workers...")
+                algo.workers.sync_weights()
+                print("Weight sync complete.")
+                print("="*80 + "\n")
+            else:
+                print("WARNING: Pre-trained model provided, but 'shared_policy' is not enabled. Cannot transfer weights.")
+        
         output_dir = os.path.abspath(os.path.join("output", "marl", args.run_id)); os.makedirs(output_dir, exist_ok=True)
         print(f"Checkpoints will be saved to: {output_dir}")
         print(f"TensorBoard logs will be saved under: {algo.logdir}")

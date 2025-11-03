@@ -43,7 +43,8 @@ def collect_env_params(env_key, args):
     
     return params
 
-def build_and_setup_env(env_key, body_name, user_params, render_mode=None, args=None):
+# START CHANGE: Add **kwargs to accept and forward extra arguments
+def build_and_setup_env(env_key, body_name, user_params, render_mode=None, args=None, **kwargs):
     """Create and configure the environment with default and user parameters."""
     
     mapping = {
@@ -56,6 +57,9 @@ def build_and_setup_env(env_key, body_name, user_params, render_mode=None, args=
 
     env_kwargs = {param_name: body_name}
     
+    # Merge any extra keyword arguments (like reward shaping params) into the env constructor arguments
+    env_kwargs.update(kwargs)
+    
     if render_mode:
         env_kwargs['render_mode'] = render_mode
         
@@ -65,7 +69,7 @@ def build_and_setup_env(env_key, body_name, user_params, render_mode=None, args=
     if env_key == "parkour":
         body_type = BodiesEnum.get_body_type(body_name)
         lidar_map = {BodyTypesEnum.CLIMBER: 'up', BodyTypesEnum.SWIMMER: 'full', BodyTypesEnum.WALKER: 'full'}
-        env_kwargs['lidars_type'] = lidar_map.get(body_type, 'down') # 'down' sẽ là fallback
+        env_kwargs['lidars_type'] = lidar_map.get(body_type, 'down') # 'down' will be fallback
         print(f"Automatically set Lidar to '{env_kwargs['lidars_type']}' for body '{body_name}'.")
 
         if body_type in [BodyTypesEnum.SWIMMER, BodyTypesEnum.AMPHIBIAN]:
@@ -73,6 +77,7 @@ def build_and_setup_env(env_key, body_name, user_params, render_mode=None, args=
             env_kwargs['density'] = WATER_DENSITY
             print(f"Automatically set density for body '{body_name}'.")
     
+    # Now, all collected kwargs are passed to gym.make
     env = gym.make(env_id, **env_kwargs)
     
     if env_key == "stump":
@@ -97,6 +102,7 @@ def build_and_setup_env(env_key, body_name, user_params, render_mode=None, args=
         print("PARKOUR environment configured with:", default_params)
         
     return env
+# END CHANGE
 
 def setup_render_window(env, args):
     """Compute and apply render window resolution."""

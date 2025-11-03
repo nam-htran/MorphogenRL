@@ -16,94 +16,47 @@ from TeachMyAgent.environments.envs.bodies.BodiesEnum import BodiesEnum
 from TeachMyAgent.environments.envs.bodies.BodyTypesEnum import BodyTypesEnum
 from TeachMyAgent.environments.envs.utils.custom_user_data import CustomUserDataObjectTypes, CustomUserData
 
+# ... (ContactDetector and LidarCallback classes remain unchanged) ...
 class ContactDetector(WaterContactDetector, ClimbingContactDetector):
     def __init__(self, env):
-        super(ContactDetector, self).__init__()
-        self.env = env
-
+        super(ContactDetector, self).__init__(); self.env = env
     def BeginContact(self, contact):
         fA, fB = contact.fixtureA, contact.fixtureB
-        if (not hasattr(fA, 'body') or not hasattr(fB, 'body') or
-                fA.body is None or fB.body is None or
-                not hasattr(fA.body, 'userData') or not hasattr(fB.body, 'userData') or
-                fA.body.userData is None or fB.body.userData is None or
-                not hasattr(fA.body.userData, 'object_type') or
-                not hasattr(fB.body.userData, 'object_type')):
-            return
-
+        if (not hasattr(fA, 'body') or not hasattr(fB, 'body') or fA.body is None or fB.body is None or not hasattr(fA.body, 'userData') or not hasattr(fB.body, 'userData') or fA.body.userData is None or fB.body.userData is None or not hasattr(fA.body.userData, 'object_type') or not hasattr(fB.body.userData, 'object_type')): return
         bodies = [contact.fixtureA.body, contact.fixtureB.body]
-
-        if any([body.userData.object_type == CustomUserDataObjectTypes.WATER for body in bodies]):
-            WaterContactDetector.BeginContact(self, contact)
-            
+        if any([body.userData.object_type == CustomUserDataObjectTypes.WATER for body in bodies]): WaterContactDetector.BeginContact(self, contact)
     def EndContact(self, contact):
         fA, fB = contact.fixtureA, contact.fixtureB
-        if (not hasattr(fA, 'body') or not hasattr(fB, 'body') or
-                fA.body is None or fB.body is None or
-                not hasattr(fA.body, 'userData') or not hasattr(fB.body, 'userData') or
-                fA.body.userData is None or fB.body.userData is None or
-                not hasattr(fA.body.userData, 'object_type') or
-                not hasattr(fB.body.userData, 'object_type')):
-            return
-
+        if (not hasattr(fA, 'body') or not hasattr(fB, 'body') or fA.body is None or fB.body is None or not hasattr(fA.body, 'userData') or not hasattr(fB.body, 'userData') or fA.body.userData is None or fB.body.userData is None or not hasattr(fA.body.userData, 'object_type') or not hasattr(fB.body.userData, 'object_type')): return
         bodies = [fA.body, fB.body]
-
-        if any([body.userData.object_type == CustomUserDataObjectTypes.WATER for body in bodies]):
-            WaterContactDetector.EndContact(self, contact)
-        elif any([body.userData.object_type == CustomUserDataObjectTypes.BODY_SENSOR for body in bodies]):
-            ClimbingContactDetector.EndContact(self, contact)
+        if any([body.userData.object_type == CustomUserDataObjectTypes.WATER for body in bodies]): WaterContactDetector.EndContact(self, contact)
+        elif any([body.userData.object_type == CustomUserDataObjectTypes.BODY_SENSOR for body in bodies]): ClimbingContactDetector.EndContact(self, contact)
         else:
             for body in bodies:
-                if (hasattr(body.userData, 'object_type') and
-                        body.userData.object_type == CustomUserDataObjectTypes.BODY_OBJECT and
-                        body.userData.check_contact):
-                    body.userData.has_contact = False
-
+                if (hasattr(body.userData, 'object_type') and body.userData.object_type == CustomUserDataObjectTypes.BODY_OBJECT and body.userData.check_contact): body.userData.has_contact = False
     def Reset(self):
-        WaterContactDetector.Reset(self)
-        ClimbingContactDetector.Reset(self)
+        WaterContactDetector.Reset(self); ClimbingContactDetector.Reset(self)
 
 class LidarCallback(Box2D.b2.rayCastCallback):
     def __init__(self, agent_mask_filter):
-        Box2D.b2.rayCastCallback.__init__(self)
-        self.agent_mask_filter = agent_mask_filter
-        self.fixture = None
-        self.is_water_detected = False
-        self.is_creeper_detected = False
-
+        Box2D.b2.rayCastCallback.__init__(self); self.agent_mask_filter = agent_mask_filter; self.fixture = None; self.is_water_detected = False; self.is_creeper_detected = False
     def ReportFixture(self, fixture, point, normal, fraction):
-        if (fixture.filterData.categoryBits & self.agent_mask_filter) == 0:
-            return -1
-        self.p2 = point
-        self.fraction = fraction
+        if (fixture.filterData.categoryBits & self.agent_mask_filter) == 0: return -1
+        self.p2 = point; self.fraction = fraction
         if hasattr(fixture.body.userData, 'object_type'):
-            self.is_water_detected = fixture.body.userData.object_type == CustomUserDataObjectTypes.WATER
-            self.is_creeper_detected = fixture.body.userData.object_type == CustomUserDataObjectTypes.SENSOR_GRIP_TERRAIN
+            self.is_water_detected = fixture.body.userData.object_type == CustomUserDataObjectTypes.WATER; self.is_creeper_detected = fixture.body.userData.object_type == CustomUserDataObjectTypes.SENSOR_GRIP_TERRAIN
         return fraction
-
-FPS    = 50
-SCALE  = 30.0
-VIEWPORT_W = 600
-VIEWPORT_H = 400
-NB_LIDAR = 10
-LIDAR_RANGE   = 160/SCALE
-INITIAL_RANDOM = 5
-TERRAIN_STEP   = 14/SCALE
-TERRAIN_LENGTH = 200
-TERRAIN_HEIGHT = VIEWPORT_H/SCALE/4
-TERRAIN_END    = 5
-INITIAL_TERRAIN_STARTPAD = 20
-FRICTION = 2.5
-WATER_DENSITY = 1.0
-HULL_CONTACT_PENALTY = 0.1
+        
+FPS=50; SCALE=30.0; VIEWPORT_W=600; VIEWPORT_H=400; NB_LIDAR=10; LIDAR_RANGE=160/SCALE; INITIAL_RANDOM=5; TERRAIN_STEP=14/SCALE; TERRAIN_LENGTH=200; TERRAIN_HEIGHT=VIEWPORT_H/SCALE/4; TERRAIN_END=5; INITIAL_TERRAIN_STARTPAD=20; FRICTION=2.5; WATER_DENSITY=1.0; HULL_CONTACT_PENALTY=0.1
 
 class ParametricContinuousParkour(gym.Env, EzPickle):
     metadata = {'render_modes': ['human', 'rgb_array'], 'render_fps': FPS}
 
+    # START CHANGE: Modify __init__ to filter kwargs
     def __init__(self, agent_body_type: str, CPPN_weights_path: str = None, input_CPPN_dim: int = 3,
                  terrain_cppn_scale: int = 10, ceiling_offset: int = 200, ceiling_clip_offset: int = 0,
                  lidars_type: str = 'full', water_clip: int = 20, movable_creepers: bool = False,
-                 render_mode: str = None, horizon: int = 3000, flip_termination_steps: int = 50, **walker_args):
+                 render_mode: str = None, horizon: int = 3000, flip_termination_steps: int = 50, **kwargs):
 
         super().__init__()
         self.rendering_viewer_w = VIEWPORT_W
@@ -112,14 +65,38 @@ class ParametricContinuousParkour(gym.Env, EzPickle):
         self.horizon = horizon
         self.ts = 0
         self.flip_termination_steps = flip_termination_steps
+        
+        # Define the keys that are used for reward shaping
+        reward_param_keys = [
+            'progress_multiplier', 'velocity_multiplier', 'torque_penalty_multiplier', 
+            'alive_bonus', 'stagnation_penalty', 'grasp_bonus', 'hull_contact_penalty'
+        ]
+        
+        # Filter kwargs: Separate reward params from walker params
+        walker_args = {}
+        reward_shaping_args = {}
+        for key, value in kwargs.items():
+            if key in reward_param_keys:
+                reward_shaping_args[key] = value
+            else:
+                walker_args[key] = value
+
+        # Store reward shaping parameters with defaults
+        self.reward_params = {
+            'progress_multiplier': reward_shaping_args.get('progress_multiplier', 130.0),
+            'velocity_multiplier': reward_shaping_args.get('velocity_multiplier', 0.3),
+            'torque_penalty_multiplier': reward_shaping_args.get('torque_penalty_multiplier', 40.0),
+            'alive_bonus': reward_shaping_args.get('alive_bonus', 0.0),
+            'stagnation_penalty': reward_shaping_args.get('stagnation_penalty', 0.1),
+            'grasp_bonus': reward_shaping_args.get('grasp_bonus', 0.02),
+            'hull_contact_penalty': reward_shaping_args.get('hull_contact_penalty', HULL_CONTACT_PENALTY)
+        }
+        # END CHANGE
 
         self.np_random = None
-        if lidars_type == "down":
-            self.lidar_angle = 1.5; self.lidar_y_offset = 0
-        elif lidars_type == "up":
-            self.lidar_angle = 2.3; self.lidar_y_offset = 1.5
-        else:
-            self.lidar_angle = np.pi; self.lidar_y_offset = 0
+        if lidars_type == "down": self.lidar_angle = 1.5; self.lidar_y_offset = 0
+        elif lidars_type == "up": self.lidar_angle = 2.3; self.lidar_y_offset = 1.5
+        else: self.lidar_angle = np.pi; self.lidar_y_offset = 0
 
         self.seed()
         self.viewer = None
@@ -128,12 +105,16 @@ class ParametricContinuousParkour(gym.Env, EzPickle):
         self.movable_creepers = movable_creepers
 
         body_type = BodiesEnum.get_body_type(agent_body_type)
+        
+        # START CHANGE: Pass ONLY walker_args to the body constructor
         if body_type in [BodyTypesEnum.SWIMMER, BodyTypesEnum.AMPHIBIAN]:
             self.agent_body = BodiesEnum[agent_body_type].value(SCALE, **walker_args)
         elif body_type == BodyTypesEnum.WALKER:
+            # Add reset_on_hull_critical_contact specifically for walkers
             self.agent_body = BodiesEnum[agent_body_type].value(SCALE, **walker_args, reset_on_hull_critical_contact=True)
-        else:
+        else: # Climbers
             self.agent_body = BodiesEnum[agent_body_type].value(SCALE, **walker_args)
+        # END CHANGE
 
         self.terrain = []
         self.water_dynamics = WaterDynamics(self.world.gravity, max_push=water_clip)
@@ -165,7 +146,9 @@ class ParametricContinuousParkour(gym.Env, EzPickle):
             total_obs_size += len(self.agent_body.get_sensors_state())
         high = np.array([np.inf]*total_obs_size)
         self.observation_space = spaces.Box(-high, high, dtype=np.float32)
-
+    
+    # ... (phần còn lại của file giữ nguyên, bao gồm cả hàm step đã được sửa đổi) ...
+    # ... The rest of the file remains unchanged, including the previously modified step function ...
     def _create_terrain_fixtures(self):
         self.fd_polygon = fixtureDef(shape=polygonShape(vertices=[(0,0),(1,0),(1,-1),(0,-1)]), friction=FRICTION)
         self.fd_edge = fixtureDef(shape=edgeShape(vertices=[(0,0),(1,1)]), friction=FRICTION)
@@ -174,7 +157,6 @@ class ParametricContinuousParkour(gym.Env, EzPickle):
 
     def _generate_agent(self):
         init_x = TERRAIN_STEP*self.TERRAIN_STARTPAD/2
-
         if self.agent_body.body_type == BodyTypesEnum.CLIMBER:
             spawn_margin = 0.5
             init_y = TERRAIN_HEIGHT + self.ceiling_offset - (self.agent_body.AGENT_HEIGHT / 2) - spawn_margin
@@ -185,33 +167,20 @@ class ParametricContinuousParkour(gym.Env, EzPickle):
             else:
                 ground_y = TERRAIN_HEIGHT
             init_y = ground_y + self.agent_body.AGENT_CENTER_HEIGHT + spawn_buffer
-
-        self.agent_body.draw(
-            self.world,
-            init_x,
-            init_y,
-            self.np_random.uniform(-INITIAL_RANDOM, INITIAL_RANDOM)
-        )
+        self.agent_body.draw(self.world, init_x, init_y, self.np_random.uniform(-INITIAL_RANDOM, INITIAL_RANDOM))
 
     def seed(self, seed=None):
-        self.np_random, seed = seeding.np_random(seed)
-        return [seed]
+        self.np_random, seed = seeding.np_random(seed); return [seed]
 
     def set_terrain_cppn_scale(self, terrain_cppn_scale, ceiling_offset, ceiling_clip_offset):
-        assert terrain_cppn_scale > 1
-        self.TERRAIN_CPPN_SCALE = terrain_cppn_scale
-        self.CEILING_LIMIT = 1000 / self.TERRAIN_CPPN_SCALE
-        self.GROUND_LIMIT = -1000 / self.TERRAIN_CPPN_SCALE
-        self.ceiling_offset = ceiling_offset / self.TERRAIN_CPPN_SCALE
-        self.ceiling_clip_offset = ceiling_clip_offset / self.TERRAIN_CPPN_SCALE
+        assert terrain_cppn_scale > 1; self.TERRAIN_CPPN_SCALE = terrain_cppn_scale
+        self.CEILING_LIMIT = 1000 / self.TERRAIN_CPPN_SCALE; self.GROUND_LIMIT = -1000 / self.TERRAIN_CPPN_SCALE
+        self.ceiling_offset = ceiling_offset / self.TERRAIN_CPPN_SCALE; self.ceiling_clip_offset = ceiling_clip_offset / self.TERRAIN_CPPN_SCALE
 
     def set_environment(self, input_vector, water_level, creepers_width=None, creepers_height=None, creepers_spacing=0.1, terrain_cppn_scale=10):
-        self.CPPN_input_vector = input_vector
-        self.water_level = water_level.item() if isinstance(water_level, np.float32) else water_level
-        self.water_level = max(0.01, self.water_level)
-        self.creepers_width = creepers_width if creepers_width is not None else creepers_width
-        self.creepers_height = creepers_height if creepers_height is not None else creepers_height
-        self.creepers_spacing = max(0.01, creepers_spacing)
+        self.CPPN_input_vector = input_vector; self.water_level = water_level.item() if isinstance(water_level, np.float32) else water_level
+        self.water_level = max(0.01, self.water_level); self.creepers_width = creepers_width if creepers_width is not None else creepers_width
+        self.creepers_height = creepers_height if creepers_height is not None else creepers_height; self.creepers_spacing = max(0.01, creepers_spacing)
         self.set_terrain_cppn_scale(terrain_cppn_scale, self.ceiling_offset*self.TERRAIN_CPPN_SCALE, self.ceiling_clip_offset*self.TERRAIN_CPPN_SCALE)
 
     def _destroy(self):
@@ -219,7 +188,7 @@ class ParametricContinuousParkour(gym.Env, EzPickle):
         self.world.contactListener = None
         for t in self.terrain:
             if t: self.world.DestroyBody(t)
-        self.terrain = []
+        self.terrain = [];
         if self.agent_body: self.agent_body.destroy(self.world)
 
     def _get_state(self):
@@ -244,146 +213,72 @@ class ParametricContinuousParkour(gym.Env, EzPickle):
         return np.array(state, dtype=np.float32)
 
     def reset(self, seed=None, options=None):
-        super().reset(seed=seed)
-        self._destroy()
-        self.world = Box2D.b2World(contactListener=self.contact_listener)
-        self.world.contactListener = self.contact_listener
+        super().reset(seed=seed); self._destroy()
+        self.world = Box2D.b2World(contactListener=self.contact_listener); self.world.contactListener = self.contact_listener
         if self.contact_listener: self.contact_listener.Reset()
-
-        self.ts = 0; self.critical_contact = False; self.prev_shaping = None
-        self.episodic_reward = 0; self.scroll = [0.0, 0.0]; self.lidar_render = 0
-        self.water_y = self.GROUND_LIMIT; self.nb_steps_outside_water = 0
-        self.nb_steps_under_water = 0; self.flipped_counter = 0
-
-        self.stagnation_counter = 0
-        self.last_progress_x = 0
-
+        self.ts = 0; self.critical_contact = False; self.prev_shaping = None; self.episodic_reward = 0; self.scroll = [0.0, 0.0]; self.lidar_render = 0
+        self.water_y = self.GROUND_LIMIT; self.nb_steps_outside_water = 0; self.nb_steps_under_water = 0; self.flipped_counter = 0; self.stagnation_counter = 0; self.last_progress_x = 0
         self._generate_terrain(); self._generate_agent()
         self.drawlist = self.terrain + self.agent_body.get_elements_to_render()
         self.lidar = [LidarCallback(self.agent_body.reference_head_object.fixtures[0].filterData.maskBits) for _ in range(NB_LIDAR)]
-        
         if self.agent_body.body_type == BodyTypesEnum.CLIMBER:
             grasp_action = np.ones(self.action_space.shape[0])
             for _ in range(50):
-                self.agent_body.activate_motors(grasp_action)
-                self.climbing_dynamics.before_step_climbing_dynamics(grasp_action, self.agent_body, self.world)
-                self.world.Step(1.0 / FPS, 6 * 30, 2 * 30)
-                self.climbing_dynamics.after_step_climbing_dynamics(self.world.contactListener, self.world)
+                self.agent_body.activate_motors(grasp_action); self.climbing_dynamics.before_step_climbing_dynamics(grasp_action, self.agent_body, self.world)
+                self.world.Step(1.0 / FPS, 6 * 30, 2 * 30); self.climbing_dynamics.after_step_climbing_dynamics(self.world.contactListener, self.world)
         else:
-            WARM_UP_STEPS = 10
-            for _ in range(WARM_UP_STEPS):
-                self.world.Step(1.0 / FPS, 6 * 30, 2 * 30)
-
+            for _ in range(10): self.world.Step(1.0 / FPS, 6 * 30, 2 * 30)
         self.critical_contact = False
         if self.contact_listener: self.contact_listener.Reset()
         for part in self.agent_body.body_parts:
-            if hasattr(part.userData, 'has_contact'):
-                part.userData.has_contact = False
-                
-        self.prev_pos_x = self.agent_body.reference_head_object.position.x
-        self.last_progress_x = self.prev_pos_x
-        
+            if hasattr(part.userData, 'has_contact'): part.userData.has_contact = False
+        self.prev_pos_x = self.agent_body.reference_head_object.position.x; self.last_progress_x = self.prev_pos_x
         return self._get_state(), {}
 
     def step(self, action):
-        self.ts += 1
-        is_agent_dead = False
-        if hasattr(self.agent_body, "nb_steps_can_survive_outside_water") and self.nb_steps_outside_water > self.agent_body.nb_steps_can_survive_outside_water:
-            is_agent_dead = True
-        if hasattr(self.agent_body, "nb_steps_can_survive_under_water") and self.nb_steps_under_water > self.agent_body.nb_steps_can_survive_under_water:
-            is_agent_dead = True
-        
+        self.ts += 1; is_agent_dead = False
+        if hasattr(self.agent_body, "nb_steps_can_survive_outside_water") and self.nb_steps_outside_water > self.agent_body.nb_steps_can_survive_outside_water: is_agent_dead = True
+        if hasattr(self.agent_body, "nb_steps_can_survive_under_water") and self.nb_steps_under_water > self.agent_body.nb_steps_can_survive_under_water: is_agent_dead = True
         if is_agent_dead: action = np.array([0] * self.action_space.shape[0])
-
         self.agent_body.activate_motors(action)
-        if self.agent_body.body_type == BodyTypesEnum.CLIMBER:
-            self.climbing_dynamics.before_step_climbing_dynamics(action, self.agent_body, self.world)
-        
+        if self.agent_body.body_type == BodyTypesEnum.CLIMBER: self.climbing_dynamics.before_step_climbing_dynamics(action, self.agent_body, self.world)
         self.world.Step(1.0 / FPS, 6 * 30, 2 * 30)
-        
-        if self.agent_body.body_type == BodyTypesEnum.CLIMBER:
-            self.climbing_dynamics.after_step_climbing_dynamics(self.world.contactListener, self.world)
-        
+        if self.agent_body.body_type == BodyTypesEnum.CLIMBER: self.climbing_dynamics.after_step_climbing_dynamics(self.world.contactListener, self.world)
         self.water_dynamics.calculate_forces(self.world.contactListener.fixture_pairs)
-        
-        state = self._get_state()
-        pos = self.agent_body.reference_head_object.position
-        vel = self.agent_body.reference_head_object.linearVelocity
+        state = self._get_state(); pos = self.agent_body.reference_head_object.position; vel = self.agent_body.reference_head_object.linearVelocity
         self.scroll = [pos[0] - self.rendering_viewer_w / SCALE / 5, pos[1] - self.rendering_viewer_h / SCALE / 2.5]
-        
-        # --- REWARD SHAPING REVISION V2 ---
-        reward = 0
-        
-        # 1. Primary Reward: Progress
-        shaping = 130 * pos[0] / SCALE 
-        if self.prev_shaping is not None:
-            reward += shaping - self.prev_shaping
-        self.prev_shaping = shaping
-        
-        # START CHANGE: Heavily incentivize forward velocity
-        reward += 0.3 * vel.x
-        # END CHANGE
-
-        # 3. Grasping Bonus for climbers
+        reward = 0; reward += self.reward_params['alive_bonus']
+        shaping = self.reward_params['progress_multiplier'] * pos[0] / SCALE 
+        if self.prev_shaping is not None: reward += shaping - self.prev_shaping
+        self.prev_shaping = shaping; reward += self.reward_params['velocity_multiplier'] * vel.x
         if self.agent_body.body_type == BodyTypesEnum.CLIMBER:
-            num_sensors_touching = 0
-            for sensor in self.agent_body.sensors:
-                if sensor.userData.has_contact:
-                    num_sensors_touching += 1
-            reward += 0.02 * num_sensors_touching 
-
-        # 4. Stagnation Penalty
-        if abs(pos.x - self.last_progress_x) < 0.01:
-            self.stagnation_counter += 1
-        else:
-            self.stagnation_counter = 0
-            self.last_progress_x = pos.x
-        
-        if self.stagnation_counter > 100:
-            reward -= 0.1
-        # --- END REWARD SHAPING REVISION V2 ---
-
-        # Penalties
-        # START CHANGE: Reduce torque penalty to encourage more powerful movements
-        for a in action:
-            reward -= self.agent_body.TORQUE_PENALTY * 40 * np.clip(np.abs(a), 0, 1)
-        # END CHANGE
-        
-        hull = self.agent_body.body_parts[0]
-        if hasattr(hull.userData, 'has_contact') and hull.userData.has_contact and self.agent_body.body_type == BodyTypesEnum.WALKER:
-            reward -= HULL_CONTACT_PENALTY
-        
-        # Termination conditions
+            num_sensors_touching = sum(1 for sensor in self.agent_body.sensors if sensor.userData.has_contact); reward += self.reward_params['grasp_bonus'] * num_sensors_touching
+        torque_penalty = 0
+        for a in action: torque_penalty += self.agent_body.TORQUE_PENALTY * self.reward_params['torque_penalty_multiplier'] * np.clip(np.abs(a), 0, 1)
+        reward -= torque_penalty; hull = self.agent_body.body_parts[0]
+        if hasattr(hull.userData, 'has_contact') and hull.userData.has_contact and self.agent_body.body_type == BodyTypesEnum.WALKER: reward -= self.reward_params['hull_contact_penalty']
+        if abs(pos.x - self.last_progress_x) < 0.01: self.stagnation_counter += 1
+        else: self.stagnation_counter = 0; self.last_progress_x = pos.x
+        if self.stagnation_counter > 100: reward -= self.reward_params['stagnation_penalty']
         if abs(state[0]) > 1.5: self.flipped_counter += 1
         else: self.flipped_counter = 0
-        
         terminated = False
         if self.flipped_counter > self.flip_termination_steps: reward = -100; terminated = True
         if self.critical_contact or pos[0] < 0 or is_agent_dead: reward = -100; terminated = True
         if pos[0] > (TERRAIN_LENGTH + self.TERRAIN_STARTPAD - TERRAIN_END) * TERRAIN_STEP: terminated = True
-        
-        self.episodic_reward += reward
-        truncated = self.ts >= self.horizon
-        
+        self.episodic_reward += reward; truncated = self.ts >= self.horizon
         if self.render_mode == "human": self.render()
-        
         info = {"success": self.episodic_reward > 230}
         return state, reward, terminated, truncated, info
 
     def _generate_terrain(self):
         self.cloud_poly, self.terrain_x, self.terrain_ground_y, self.terrain_ceiling_y, self.terrain_poly, self.terrain = [], [], [], [], [], []
-        y = self.terrain_CPPN.generate(self.CPPN_input_vector) / self.TERRAIN_CPPN_SCALE
-        ground_y, ceiling_y = y[:, 0], y[:, 1]
-        offset = TERRAIN_HEIGHT - ground_y[0]
-        ground_y = np.add(ground_y, offset)
-        offset = TERRAIN_HEIGHT + self.ceiling_offset - ceiling_y[0]
-        ceiling_y = np.add(ceiling_y, offset)
-        terrain_creepers = []; water_body = None; x = 0; max_x = TERRAIN_LENGTH * TERRAIN_STEP + self.TERRAIN_STARTPAD * TERRAIN_STEP
-        i = 0
+        y = self.terrain_CPPN.generate(self.CPPN_input_vector) / self.TERRAIN_CPPN_SCALE; ground_y, ceiling_y = y[:, 0], y[:, 1]
+        offset = TERRAIN_HEIGHT - ground_y[0]; ground_y = np.add(ground_y, offset); offset = TERRAIN_HEIGHT + self.ceiling_offset - ceiling_y[0]; ceiling_y = np.add(ceiling_y, offset)
+        terrain_creepers = []; water_body = None; x = 0; max_x = TERRAIN_LENGTH * TERRAIN_STEP + self.TERRAIN_STARTPAD * TERRAIN_STEP; i = 0
         while x < max_x:
             self.terrain_x.append(x)
-            if i < self.TERRAIN_STARTPAD:
-                self.terrain_ground_y.append(TERRAIN_HEIGHT); self.terrain_ceiling_y.append(TERRAIN_HEIGHT + self.ceiling_offset)
+            if i < self.TERRAIN_STARTPAD: self.terrain_ground_y.append(TERRAIN_HEIGHT); self.terrain_ceiling_y.append(TERRAIN_HEIGHT + self.ceiling_offset)
             else:
                 self.terrain_ground_y.append(ground_y[i - self.TERRAIN_STARTPAD].item())
                 ceiling_val = ceiling_y[i - self.TERRAIN_STARTPAD] if ceiling_y[i - self.TERRAIN_STARTPAD] >= ground_y[i - self.TERRAIN_STARTPAD] + self.ceiling_clip_offset else ground_y[i - self.TERRAIN_STARTPAD] + self.ceiling_clip_offset
@@ -393,19 +288,14 @@ class ParametricContinuousParkour(gym.Env, EzPickle):
         for i in range(len(self.terrain_x) - 1):
             poly = [(self.terrain_x[i], self.terrain_ground_y[i]), (self.terrain_x[i + 1], self.terrain_ground_y[i + 1])]
             self.fd_edge.shape.vertices = poly; t = self.world.CreateStaticBody(fixtures=self.fd_edge, userData=CustomUserData("grass", CustomUserDataObjectTypes.TERRAIN))
-            color = (0.3, 1.0 if (i % 2) == 0 else 0.8, 0.3); t.color1 = color; t.color2 = color; self.terrain.append(t)
-            poly += [(poly[1][0], self.GROUND_LIMIT), (poly[0][0], self.GROUND_LIMIT)]; self.terrain_poly.append((poly, (0.4, 0.6, 0.3)))
-            
+            color = (0.3, 1.0 if (i % 2) == 0 else 0.8, 0.3); t.color1 = color; t.color2 = color; self.terrain.append(t); poly += [(poly[1][0], self.GROUND_LIMIT), (poly[0][0], self.GROUND_LIMIT)]; self.terrain_poly.append((poly, (0.4, 0.6, 0.3)))
             poly = [(self.terrain_x[i], self.terrain_ceiling_y[i]), (self.terrain_x[i + 1], self.terrain_ceiling_y[i + 1])]
             self.fd_edge.shape.vertices = poly; t = self.world.CreateStaticBody(fixtures=self.fd_edge, userData=CustomUserData("rock", CustomUserDataObjectTypes.GRIP_TERRAIN))
-            color = (0, 0.25, 0.25); t.color1 = color; t.color2 = color; self.terrain.append(t)
-            poly += [(poly[1][0], self.CEILING_LIMIT), (poly[0][0], self.CEILING_LIMIT)]; self.terrain_poly.append((poly, (0.5, 0.5, 0.5)))
-            
+            color = (0, 0.25, 0.25); t.color1 = color; t.color2 = color; self.terrain.append(t); poly += [(poly[1][0], self.CEILING_LIMIT), (poly[0][0], self.CEILING_LIMIT)]; self.terrain_poly.append((poly, (0.5, 0.5, 0.5)))
             if self.creepers_width is not None and self.creepers_height is not None and self.creepers_height > 0:
                 if space_from_precedent_creeper >= self.creepers_spacing:
                     creeper_height = max(0.2, self.np_random.normal(self.creepers_height, 0.1)); creeper_x = self.terrain_x[i] + TERRAIN_STEP / 2
-                    creeper_y = self.terrain_ceiling_y[i]; poly = [(creeper_x - self.creepers_width / 2, creeper_y), (creeper_x + self.creepers_width / 2, creeper_y),
-                                                                 (creeper_x + self.creepers_width / 2, creeper_y - creeper_height), (creeper_x - self.creepers_width / 2, creeper_y - creeper_height)]
+                    creeper_y = self.terrain_ceiling_y[i]; poly = [(creeper_x - self.creepers_width / 2, creeper_y), (creeper_x + self.creepers_width / 2, creeper_y), (creeper_x + self.creepers_width / 2, creeper_y - creeper_height), (creeper_x - self.creepers_width / 2, creeper_y - creeper_height)]
                     self.fd_creeper.shape.vertices = poly
                     t = self.world.CreateDynamicBody(position=(0, 0), fixtures=self.fd_creeper, userData=CustomUserData("creeper", CustomUserDataObjectTypes.SENSOR_GRIP_TERRAIN)) if self.movable_creepers else self.world.CreateStaticBody(fixtures=self.fd_creeper, userData=CustomUserData("creeper", CustomUserDataObjectTypes.SENSOR_GRIP_TERRAIN))
                     t.color1, t.color2 = (1, 1, 0), (0.8, 0.8, 0); terrain_creepers.append(t); space_from_precedent_creeper = 0
@@ -438,16 +328,13 @@ class ParametricContinuousParkour(gym.Env, EzPickle):
             if self.render_mode == 'rgb_array': return np.zeros((self.rendering_viewer_h, self.rendering_viewer_w, 3), dtype=np.uint8)
             return None
         self.viewer.set_bounds(self.scroll[0], self.rendering_viewer_w/SCALE + self.scroll[0], self.scroll[1], self.rendering_viewer_h/SCALE + self.scroll[1])
-        self.viewer.draw_polygon([(self.scroll[0], self.scroll[1]), (self.scroll[0]+self.rendering_viewer_w/SCALE, self.scroll[1]),
-                                  (self.scroll[0]+self.rendering_viewer_w/SCALE, self.scroll[1]+self.rendering_viewer_h/SCALE),
-                                  (self.scroll[0], self.scroll[1]+self.rendering_viewer_h/SCALE)], color=(0.9, 0.9, 1.0))
+        self.viewer.draw_polygon([(self.scroll[0], self.scroll[1]), (self.scroll[0]+self.rendering_viewer_w/SCALE, self.scroll[1]), (self.scroll[0]+self.rendering_viewer_w/SCALE, self.scroll[1]+self.rendering_viewer_h/SCALE), (self.scroll[0], self.scroll[1]+self.rendering_viewer_h/SCALE)], color=(0.9, 0.9, 1.0))
         for poly,x1,x2 in self.cloud_poly:
             if x2 < self.scroll[0]/2 or x1 > self.scroll[0]/2 + self.rendering_viewer_w/SCALE: continue
             self.viewer.draw_polygon([(p[0]+self.scroll[0]/2, p[1]) for p in poly], color=(1,1,1))
         for obj in self.drawlist:
             color1, color2 = obj.color1, obj.color2
-            if hasattr(obj.userData, 'object_type') and obj.userData.object_type == CustomUserDataObjectTypes.BODY_SENSOR and hasattr(obj.userData, 'has_joint') and obj.userData.has_joint:
-                color1, color2 = (1.0, 1.0, 0.0), (1.0, 1.0, 0.0)
+            if hasattr(obj.userData, 'object_type') and obj.userData.object_type == CustomUserDataObjectTypes.BODY_SENSOR and hasattr(obj.userData, 'has_joint') and obj.userData.has_joint: color1, color2 = (1.0, 1.0, 0.0), (1.0, 1.0, 0.0)
             elif obj == self.agent_body.reference_head_object: color1, color2 = self.color_agent_head(color1, color2)
             for f in obj.fixtures:
                 trans = f.body.transform
