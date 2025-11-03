@@ -4,7 +4,7 @@ WATCH:
   auto_skip_stuck: true
 
 PPO:
-  enabled: false
+  enabled: true
   run_id: "ppo_reach_the_end_run"
   env: "parkour"
   body: "classic_bipedal"
