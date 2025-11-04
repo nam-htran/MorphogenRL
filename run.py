@@ -88,11 +88,12 @@ def run_pipeline(args: SimpleNamespace):
         
         final_config = {**default_params, **stage_config}
         
-        # START CHANGE: Inject pre-trained model path
         if transfer_learning_enabled and pretrained_model_path:
-            final_config['pretrained_model_path'] = pretrained_model_path
-            print(f"INFO: Stage '{stage_name}' will start from pre-trained model: {pretrained_model_path}")
-        # END CHANGE
+            if stage_name != 'MARL':
+                final_config['pretrained_model_path'] = pretrained_model_path
+                print(f"INFO: Stage '{stage_name}' will start from pre-trained model: {pretrained_model_path}")
+            else:
+                print("INFO: MARL stage will be trained from scratch (transfer learning skipped for MARL).")
             
         stage_args = SimpleNamespace(**final_config)
 

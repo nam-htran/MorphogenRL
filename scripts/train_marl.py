@@ -31,69 +31,6 @@ from TeachMyAgent.environments.envs.multi_agent_parametric_parkour import MultiA
 from TeachMyAgent.environments.envs.interactive_multi_agent_parkour import InteractiveMultiAgentParkour
 from TeachMyAgent.environments.envs.parametric_continuous_parkour import ParametricContinuousParkour
 
-def load_sb3_weights_into_rllib_module(rllib_module, sb3_model_path, temp_env):
-    """
-    Loads weights from a saved SB3 model (PPO or SAC) into an RLlib RLModule.
-    This function performs a best-effort transfer assuming similar MLP architectures.
-    """
-    print(f"Attempting to transfer weights from SB3 model: {sb3_model_path}")
-    try:
-        # Provide a temporary environment to `load` to prevent internal conflicts
-        # Heuristic to detect model type from file name for robustness
-        model_name_upper = sb3_model_path.upper().replace('\\', '/')
-        if "SAC" in os.path.basename(model_name_upper):
-            sb3_model = SAC.load(sb3_model_path, device='cpu', env=temp_env)
-            sb3_policy_state_dict = sb3_model.policy.state_dict()
-            print("Loaded SB3 SAC model for weight transfer.")
-        else:
-            sb3_model = PPO.load(sb3_model_path, device='cpu', env=temp_env)
-            sb3_policy_state_dict = sb3_model.policy.state_dict()
-            print("Loaded SB3 PPO model for weight transfer.")
-            
-    except Exception as e:
-        print(f"ERROR: Could not load SB3 model. Aborting weight transfer. Error: {e}")
-        return
-
-    rllib_module_state_dict = rllib_module.state_dict()
-
-    key_mapping = {}
-    if isinstance(sb3_model, SAC):
-        # Mapping from SAC MlpPolicy to RLlib PPO RLModule
-        key_mapping = {
-            "actor.features_extractor.0.weight": "pi_encoder._nets.0.weight", "actor.features_extractor.0.bias": "pi_encoder._nets.0.bias",
-            "actor.features_extractor.2.weight": "pi_encoder._nets.1.weight", "actor.features_extractor.2.bias": "pi_encoder._nets.1.bias",
-            "critic.features_extractor.0.weight": "vf_encoder._nets.0.weight", "critic.features_extractor.0.bias": "vf_encoder._nets.0.bias",
-            "critic.features_extractor.2.weight": "vf_encoder._nets.1.weight", "critic.features_extractor.2.bias": "vf_encoder._nets.1.bias",
-            "actor.mu.weight": "_action_dist_layer.weight", "actor.mu.bias": "_action_dist_layer.bias",
-            "critic.qf0.2.weight": "_value_layer.weight", "critic.qf0.2.bias": "_value_layer.bias",
-        }
-    elif isinstance(sb3_model, PPO):
-        # Mapping from PPO MlpPolicy to RLlib PPO RLModule
-        key_mapping = {
-            "mlp_extractor.policy_net.0.weight": "pi_encoder._nets.0.weight", "mlp_extractor.policy_net.0.bias": "pi_encoder._nets.0.bias",
-            "mlp_extractor.policy_net.2.weight": "pi_encoder._nets.1.weight", "mlp_extractor.policy_net.2.bias": "pi_encoder._nets.1.bias",
-            "mlp_extractor.value_net.0.weight": "vf_encoder._nets.0.weight", "mlp_extractor.value_net.0.bias": "vf_encoder._nets.0.bias",
-            "mlp_extractor.value_net.2.weight": "vf_encoder._nets.1.weight", "mlp_extractor.value_net.2.bias": "vf_encoder._nets.1.bias",
-            "action_net.weight": "_action_dist_layer.weight", "action_net.bias": "_action_dist_layer.bias",
-            "value_net.weight": "_value_layer.weight", "value_net.bias": "_value_layer.bias",
-        }
-    
-    new_rllib_state_dict = rllib_module_state_dict.copy()
-    weights_transferred = 0
-    for sb3_key, rllib_key in key_mapping.items():
-        if sb3_key in sb3_policy_state_dict and rllib_key in new_rllib_state_dict:
-            if sb3_policy_state_dict[sb3_key].shape == new_rllib_state_dict[rllib_key].shape:
-                new_rllib_state_dict[rllib_key] = sb3_policy_state_dict[sb3_key]
-                weights_transferred += 1
-            else:
-                print(f"  - Shape mismatch for key '{rllib_key}'. SB3 shape: {sb3_policy_state_dict[sb3_key].shape}, RLlib shape: {new_rllib_state_dict[rllib_key].shape}. Skipping.")
-
-    if weights_transferred > 0:
-        rllib_module.load_state_dict(new_rllib_state_dict)
-        print(f"Successfully transferred {weights_transferred} weight tensors from SB3 to RLlib module.")
-    else:
-        print("WARNING: No weights were transferred. Check network architectures in YAML and key mappings in train_marl.py.")
-
 def add_marl_args(parser: argparse.ArgumentParser) -> argparse.ArgumentParser:
     parser.add_argument("--mode", type=str, default="interactive", choices=["cooperative", "interactive"], help="Environment mode.")
     parser.add_argument("--n-agents", type=int, default=2, help="Number of agents.")
@@ -206,23 +143,7 @@ def main(args: argparse.Namespace) -> Optional[str]:
     else:
         print(f"Starting a single MARL training run for {args.iterations} iterations...")
         algo = config.build()
-        
-        pretrained_path = getattr(args, 'pretrained_model_path', None)
-        if pretrained_path and os.path.exists(pretrained_path):
-            if hasattr(args, 'shared_policy') and args.shared_policy:
-                print("\n" + "="*80)
-                print("TRANSFER LEARNING: Loading weights from SB3 model into shared policy...")
-                module_to_load = algo.get_module("shared_policy")
-                load_sb3_weights_into_rllib_module(module_to_load, pretrained_path, temp_env_for_loading)
                 
-                print("Syncing transferred weights to all rollout workers...")
-                algo.env_runner_group.sync_weights()
-                
-                print("Weight sync complete.")
-                print("="*80 + "\n")
-            else:
-                print("WARNING: Pre-trained model provided, but 'shared_policy' is not enabled. Cannot transfer weights.")
-        
         output_dir = os.path.abspath(os.path.join("output", "marl", args.run_id)); os.makedirs(output_dir, exist_ok=True)
         print(f"Checkpoints will be saved to: {output_dir}")
         print(f"TensorBoard logs will be saved under: {algo.logdir}")

@@ -12,10 +12,10 @@ PPO:
   env: "parkour"
   body: "classic_bipedal"
   
-  total_timesteps: 500000 
-  save_freq: 250000
-  n_envs: 16
-  horizon: 3000
+  total_timesteps: 2000000 
+  save_freq: 500000
+  n_envs: 32
+  horizon: 5000
 
   reward_shaping:
     progress_multiplier: 200.0
@@ -25,8 +25,8 @@ PPO:
 
   ppo_config:
     gamma: 0.99 
-    n_steps: 2048 
-    ent_coef: 0.01 
+    n_steps: 4096
+    ent_coef: 0.005
     learning_rate: 3e-4
     n_epochs: 10
     batch_size: 64
@@ -37,19 +37,19 @@ ACL:
   env: "parkour"
   body: "classic_bipedal"
   
-  student_steps_per_stage: 300000
-  total_stages: 30
+  student_steps_per_stage: 250000
+  total_stages: 24 
 
   eval_episodes: 10
   mastery_threshold: -50.0
-  difficulty_increment: 0.033
-  horizon: 3000
-  n_envs: 16
+  difficulty_increment: 0.042
+  horizon: 5000
+  n_envs: 32
   seed: 42
   
   curriculum_replay:
     enabled: true
-    replay_ratio: 0.2
+    replay_ratio: 0.25
 
   reward_shaping:
     progress_multiplier: 200.0
@@ -71,9 +71,9 @@ MARL:
   mode: "interactive"
   n_agents: 2
   body: "classic_bipedal"
-  num_workers: 16
+  num_workers: 4
   num_gpus: 2
-  horizon: 3000
+  horizon: 5000
   
   reward_type: "shared"
   shared_policy: true
