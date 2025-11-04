@@ -1,0 +1,11 @@
+# configs/environments/parkour_flat_ground.yaml
+env: "parkour"
+# START CHANGE: Sử dụng body cũ đã được kiểm chứng
+body: "old_classic_bipedal"
+# END CHANGE
+horizon: 5000
+
+env_params:
+  input_vector: [0.0, 0.0, 0.0]
+  water_level: 0.0
+  creepers_height: 0.0

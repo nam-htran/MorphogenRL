@@ -1,3 +1,4 @@
+# TeachMyAgent/environments/envs/parametric_continuous_parkour.py
 import math
 import os
 
@@ -15,7 +16,6 @@ from TeachMyAgent.environments.envs.bodies.BodiesEnum import BodiesEnum
 from TeachMyAgent.environments.envs.bodies.BodyTypesEnum import BodyTypesEnum
 from TeachMyAgent.environments.envs.utils.custom_user_data import CustomUserDataObjectTypes, CustomUserData
 
-# ... (ContactDetector and LidarCallback classes remain the same) ...
 class ContactDetector(WaterContactDetector, ClimbingContactDetector):
     def __init__(self, env):
         super(ContactDetector, self).__init__(); self.env = env
@@ -67,7 +67,8 @@ class ParametricContinuousParkour(gym.Env, EzPickle):
         reward_param_keys = [
             'progress_multiplier', 'velocity_multiplier', 'torque_penalty_multiplier', 
             'alive_bonus', 'stagnation_penalty', 'grasp_bonus', 'hull_contact_penalty',
-            'body_angle_penalty', 'low_hull_penalty' # Added new reward keys
+            'body_angle_penalty', 'low_hull_penalty',
+            'standing_bonus_multiplier'
         ]
         
         walker_args = {}
@@ -87,7 +88,8 @@ class ParametricContinuousParkour(gym.Env, EzPickle):
             'grasp_bonus': reward_shaping_args.get('grasp_bonus', 0.02),
             'hull_contact_penalty': reward_shaping_args.get('hull_contact_penalty', HULL_CONTACT_PENALTY),
             'body_angle_penalty': reward_shaping_args.get('body_angle_penalty', 0.0),
-            'low_hull_penalty': reward_shaping_args.get('low_hull_penalty', 0.0)
+            'low_hull_penalty': reward_shaping_args.get('low_hull_penalty', 0.0),
+            'standing_bonus_multiplier': reward_shaping_args.get('standing_bonus_multiplier', 0.0)
         }
 
         self.np_random = None
@@ -114,7 +116,6 @@ class ParametricContinuousParkour(gym.Env, EzPickle):
         self.prev_shaping = None
         self.episodic_reward = 0
 
-        # ... (rest of __init__ is the same)
         self.TERRAIN_STARTPAD = max(INITIAL_TERRAIN_STARTPAD, self.agent_body.AGENT_WIDTH / TERRAIN_STEP + 5)
         self._create_terrain_fixtures()
 
@@ -139,88 +140,7 @@ class ParametricContinuousParkour(gym.Env, EzPickle):
             total_obs_size += len(self.agent_body.get_sensors_state())
         high = np.array([np.inf]*total_obs_size)
         self.observation_space = spaces.Box(-high, high, dtype=np.float32)
-
-
-    def step(self, action):
-        self.ts += 1; is_agent_dead = False
-        if hasattr(self.agent_body, "nb_steps_can_survive_outside_water") and self.nb_steps_outside_water > self.agent_body.nb_steps_can_survive_outside_water: is_agent_dead = True
-        if hasattr(self.agent_body, "nb_steps_can_survive_under_water") and self.nb_steps_under_water > self.agent_body.nb_steps_can_survive_under_water: is_agent_dead = True
-        if is_agent_dead: action = np.array([0] * self.action_space.shape[0])
-        
-        self.agent_body.activate_motors(action)
-        if self.agent_body.body_type == BodyTypesEnum.CLIMBER: self.climbing_dynamics.before_step_climbing_dynamics(action, self.agent_body, self.world)
-        self.world.Step(1.0 / FPS, 6 * 30, 2 * 30)
-        if self.agent_body.body_type == BodyTypesEnum.CLIMBER: self.climbing_dynamics.after_step_climbing_dynamics(self.world.contactListener, self.world)
-        self.water_dynamics.calculate_forces(self.world.contactListener.fixture_pairs)
-        
-        state = self._get_state()
-        pos = self.agent_body.reference_head_object.position
-        vel = self.agent_body.reference_head_object.linearVelocity
-        is_under_water = pos.y <= self.water_y
-        self.scroll = [pos[0] - self.rendering_viewer_w / SCALE / 5, pos[1] - self.rendering_viewer_h / SCALE / 2.5]
-        
-        # --- START: Advanced Reward Shaping & Logging ---
-        reward = 0
-        info = {}
-
-        # Progress and velocity rewards
-        shaping = self.reward_params['progress_multiplier'] * pos[0] / SCALE 
-        if self.prev_shaping is not None: reward += shaping - self.prev_shaping
-        self.prev_shaping = shaping
-        reward += self.reward_params['velocity_multiplier'] * vel.x
-        
-        # Penalties
-        reward -= self.reward_params['body_angle_penalty'] * abs(state[0]) # Penalty for not being upright
-        
-        if pos[1] < self.agent_body.AGENT_CENTER_HEIGHT * 0.7 and not is_under_water:
-            reward -= self.reward_params['low_hull_penalty'] # Penalty for "crawling"
-            
-        torque_penalty = sum(self.agent_body.TORQUE_PENALTY * self.reward_params['torque_penalty_multiplier'] * np.clip(np.abs(a), 0, 1) for a in action)
-        reward -= torque_penalty
-        
-        hull = self.agent_body.body_parts[0]
-        if hasattr(hull.userData, 'has_contact') and hull.userData.has_contact and self.agent_body.body_type == BodyTypesEnum.WALKER:
-            reward -= self.reward_params['hull_contact_penalty']
-
-        # Stagnation penalty
-        if abs(pos.x - self.last_progress_x) < 0.01: self.stagnation_counter += 1
-        else: self.stagnation_counter = 0; self.last_progress_x = pos.x
-        if self.stagnation_counter > 100: reward -= self.reward_params['stagnation_penalty']
-        
-        # Termination conditions
-        terminated = False
-        is_fall = False
-        if abs(state[0]) > 1.5: self.flipped_counter += 1
-        else: self.flipped_counter = 0
-        
-        if self.flipped_counter > self.flip_termination_steps: 
-            reward = -100; terminated = True; is_fall = True
-        if self.critical_contact or pos[0] < 0 or is_agent_dead: 
-            reward = -100; terminated = True; is_fall = True
-        if pos[0] > (TERRAIN_LENGTH + self.TERRAIN_STARTPAD - TERRAIN_END) * TERRAIN_STEP: 
-            terminated = True
-            
-        self.episodic_reward += reward
-        truncated = self.ts >= self.horizon
-
-        # Logging custom metrics
-        info['progress_x'] = pos[0]
-        info['body_height'] = pos[1]
-        if terminated or truncated:
-            info['is_fall'] = 1.0 if is_fall else 0.0
-            info['episode'] = {
-                'r': self.episodic_reward,
-                'l': self.ts,
-                'final_progress_x': pos[0]
-            }
-        # --- END: Advanced Reward Shaping & Logging ---
-
-        if self.render_mode == "human": self.render()
-        
-        return state, reward, terminated, truncated, info
-        
-    # ... (the rest of the file: _generate_terrain, render, etc. remains the same)
-    # ...
+    
     def _create_terrain_fixtures(self):
         self.fd_polygon = fixtureDef(shape=polygonShape(vertices=[(0,0),(1,0),(1,-1),(0,-1)]), friction=FRICTION)
         self.fd_edge = fixtureDef(shape=edgeShape(vertices=[(0,0),(1,1)]), friction=FRICTION)
@@ -233,7 +153,7 @@ class ParametricContinuousParkour(gym.Env, EzPickle):
             spawn_margin = 0.5
             init_y = TERRAIN_HEIGHT + self.ceiling_offset - (self.agent_body.AGENT_HEIGHT / 2) - spawn_margin
         else:
-            spawn_buffer = 0.5
+            spawn_buffer = 2.0
             if hasattr(self, 'terrain_ground_y') and len(self.terrain_ground_y) > int(self.TERRAIN_STARTPAD / 2):
                 ground_y = self.terrain_ground_y[int(self.TERRAIN_STARTPAD / 2)]
             else:
@@ -306,7 +226,105 @@ class ParametricContinuousParkour(gym.Env, EzPickle):
             if hasattr(part.userData, 'has_contact'): part.userData.has_contact = False
         self.prev_pos_x = self.agent_body.reference_head_object.position.x; self.last_progress_x = self.prev_pos_x
         return self._get_state(), {}
+
+    def step(self, action):
+        self.ts += 1; is_agent_dead = False
+        if hasattr(self.agent_body, "nb_steps_can_survive_outside_water") and self.nb_steps_outside_water > self.agent_body.nb_steps_can_survive_outside_water: is_agent_dead = True
+        if hasattr(self.agent_body, "nb_steps_can_survive_under_water") and self.nb_steps_under_water > self.agent_body.nb_steps_can_survive_under_water: is_agent_dead = True
+        if is_agent_dead: action = np.array([0] * self.action_space.shape[0])
         
+        self.agent_body.activate_motors(action)
+        if self.agent_body.body_type == BodyTypesEnum.CLIMBER: self.climbing_dynamics.before_step_climbing_dynamics(action, self.agent_body, self.world)
+        self.world.Step(1.0 / FPS, 6 * 30, 2 * 30)
+        if self.agent_body.body_type == BodyTypesEnum.CLIMBER: self.climbing_dynamics.after_step_climbing_dynamics(self.world.contactListener, self.world)
+        self.water_dynamics.calculate_forces(self.world.contactListener.fixture_pairs)
+        
+        state = self._get_state()
+        pos = self.agent_body.reference_head_object.position
+        vel = self.agent_body.reference_head_object.linearVelocity
+        is_under_water = pos.y <= self.water_y
+        self.scroll = [pos[0] - self.rendering_viewer_w / SCALE / 5, pos[1] - self.rendering_viewer_h / SCALE / 2.5]
+        
+        reward = 0
+        info = {}
+
+        # Progress and velocity rewards
+        shaping = self.reward_params['progress_multiplier'] * pos[0] / SCALE 
+        if self.prev_shaping is not None: reward += shaping - self.prev_shaping
+        self.prev_shaping = shaping
+        reward += self.reward_params['velocity_multiplier'] * vel.x
+        
+        # --- START: NEW KNEE-BASED STANDING BONUS LOGIC ---
+        if self.reward_params['standing_bonus_multiplier'] > 0 and not is_under_water:
+            # Assumes the last two motors are the knee joints for classic_bipedal
+            if len(self.agent_body.motors) >= 2:
+                knee_joints = self.agent_body.motors[-2:] 
+                
+                knee_straight_bonus = 0.0
+                for joint in knee_joints:
+                    # Normalize angle: 0 for fully bent, 1 for fully straight
+                    normalized_angle = (joint.angle - joint.lowerLimit) / (joint.upperLimit - joint.lowerLimit)
+                    knee_straight_bonus += normalized_angle
+
+                knee_straight_bonus /= len(knee_joints)
+                reward += self.reward_params['standing_bonus_multiplier'] * knee_straight_bonus
+        # --- END: NEW KNEE-BASED STANDING BONUS LOGIC ---
+
+        # Penalties
+        reward -= self.reward_params['body_angle_penalty'] * abs(state[0])
+        
+        ground_y = TERRAIN_HEIGHT
+        current_x_idx = int(pos.x / TERRAIN_STEP)
+        if 0 <= current_x_idx < len(self.terrain_ground_y):
+            ground_y = self.terrain_ground_y[current_x_idx]
+        current_height_from_ground = pos.y - ground_y
+
+        if current_height_from_ground < self.agent_body.AGENT_CENTER_HEIGHT * 0.5 and not is_under_water:
+            reward -= self.reward_params['low_hull_penalty']
+            
+        torque_penalty = sum(self.agent_body.TORQUE_PENALTY * self.reward_params['torque_penalty_multiplier'] * np.clip(np.abs(a), 0, 1) for a in action)
+        reward -= torque_penalty
+        
+        # hull = self.agent_body.body_parts[0]
+        # if hasattr(hull.userData, 'has_contact') and hull.userData.has_contact and self.agent_body.body_type == BodyTypesEnum.WALKER:
+        #     reward -= self.reward_params['hull_contact_penalty']
+
+        # Stagnation penalty
+        if abs(pos.x - self.last_progress_x) < 0.01: self.stagnation_counter += 1
+        else: self.stagnation_counter = 0; self.last_progress_x = pos.x
+        if self.stagnation_counter > 100: reward -= self.reward_params['stagnation_penalty']
+        
+        # Termination conditions
+        terminated = False
+        is_fall = False
+        if abs(state[0]) > 1.5: self.flipped_counter += 1
+        else: self.flipped_counter = 0
+        
+        if self.flipped_counter > self.flip_termination_steps: 
+            reward = -100; terminated = True; is_fall = True
+        if self.critical_contact or pos[0] < 0 or is_agent_dead: 
+            reward = -100; terminated = True; is_fall = True
+        if pos[0] > (TERRAIN_LENGTH + self.TERRAIN_STARTPAD - TERRAIN_END) * TERRAIN_STEP: 
+            terminated = True
+            
+        self.episodic_reward += reward
+        truncated = self.ts >= self.horizon
+
+        # Logging custom metrics
+        info['progress_x'] = pos[0]
+        info['body_height'] = pos[1]
+        if terminated or truncated:
+            info['is_fall'] = 1.0 if is_fall else 0.0
+            info['episode'] = {
+                'r': self.episodic_reward,
+                'l': self.ts,
+                'final_progress_x': pos[0]
+            }
+
+        if self.render_mode == "human": self.render()
+        
+        return state, reward, terminated, truncated, info
+
     def _generate_terrain(self):
         self.cloud_poly, self.terrain_x, self.terrain_ground_y, self.terrain_ceiling_y, self.terrain_poly, self.terrain = [], [], [], [], [], []
         y = self.terrain_CPPN.generate(self.CPPN_input_vector) / self.TERRAIN_CPPN_SCALE; ground_y, ceiling_y = y[:, 0], y[:, 1]

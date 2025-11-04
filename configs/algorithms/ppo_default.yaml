@@ -1,21 +1,23 @@
-run_id: "ppo_parkour_run"
-total_timesteps: 2000000 
-save_freq: 500000
-n_envs: 32
+run_id: "ppo_base_8h_run"
+total_timesteps: 1000000 
+save_freq: 250000
+
+n_envs: 8
 seed: 42
 
 reward_shaping:
-  progress_multiplier: 200.0
-  velocity_multiplier: 0.5
-  torque_penalty_multiplier: 30.0
-  alive_bonus: 0.0
-  body_angle_penalty: 0.2
-  low_hull_penalty: 0.5
+  progress_multiplier: 400.0
+  velocity_multiplier: 3.0
+  torque_penalty_multiplier: 20.0
+  body_angle_penalty: 0.5
+  low_hull_penalty: 0.2
+  standing_bonus_multiplier: 1.0
 
 ppo_config:
-  gamma: 0.99 
-  n_steps: 4096
+  gamma: 0.995
+  n_steps: 8192 
   ent_coef: 0.005
-  learning_rate: 3e-4
+  learning_rate: 0.0001
   n_epochs: 10
-  batch_size: 64
+  batch_size: 256
+  clip_range: 0.2

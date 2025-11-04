@@ -1,29 +1,16 @@
-run_id: "marl_coop_run"
+run_id: "marl_interactive_8h_run"
 mode: "interactive"
 n_agents: 2
-iterations: 150
-num_workers: 4
-num_gpus: 1
+
+iterations: 100
+num_workers: 3
+num_gpus: 2
 
 reward_type: "shared"
-shared_policy: true
+shared_policy: true 
 use_cc: true
 
-use_tune: false 
-tune_config:
-  num_samples: 20 
-  stopper:
-    patience: 5
-    metric: "episode_reward_mean"
-  search_space:
-    training:
-      lr: "tune.loguniform(1e-5, 1e-3)"
-      gamma: "tune.choice([0.99, 0.995])"
-      lambda_: "tune.uniform(0.9, 1.0)"
-      clip_param: "tune.choice([0.1, 0.2, 0.3])"
-      entropy_coeff: "tune.loguniform(0.001, 0.05)"
-    model:
-      fcnet_hiddens: "tune.choice([[64, 64], [128, 128], [256, 256]])"
+use_tune: false
 
 ppo_config:
   training:
