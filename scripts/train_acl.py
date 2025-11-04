@@ -1,4 +1,3 @@
-# scripts/train_acl.py
 import os
 import sys
 import time
@@ -17,167 +16,209 @@ import TeachMyAgent.environments
 from utils.env_utils import build_and_setup_env
 from utils.shared_args import add_common_args, add_environment_args, add_render_args
 
-# ... (Các hằng số và hàm parse giữ nguyên) ...
-PARAM_SPACE_LIMS = np.array([[-1.0, 1.0],[-1.0, 1.0],[-1.0, 1.0],[0.0, 0.8],])
-EASY_PARAMS = np.array([0.0, 0.0, 0.0, 0.0])
-def get_linear_schedule(initial_value: float) -> Callable[[float], float]:
-    def func(progress_remaining: float) -> float: return progress_remaining * initial_value
-    return func
-def parse_schedule(config_value: Union[dict, float, str]):
-    if isinstance(config_value, dict):
-        schedule_type = config_value.get("type")
-        if schedule_type == "linear": return get_linear_schedule(float(config_value["initial_value"]))
-        else: raise ValueError(f"Unknown schedule type: {schedule_type}")
-    return float(config_value)
+# --- START: New constants and helpers for multi-dimensional ACL ---
+# Defines the name and valid range [min, max] for each curriculum parameter
+PARAM_SPACE_MAP = {
+    "input_vector_0": [-1.0, 1.0],
+    "input_vector_1": [-1.0, 1.0],
+    "input_vector_2": [-1.0, 1.0],
+    "water_level": [0.0, 0.8],
+    "creepers_height": [0.0, 10.0],
+    "creepers_spacing": [2.0, 0.05] # Note: Spacing decreases to make it harder
+}
+# --- END: New constants ---
 
 def add_acl_args(parser: argparse.ArgumentParser) -> argparse.ArgumentParser:
     parser = add_common_args(parser); parser = add_environment_args(parser); parser = add_render_args(parser)
     group = parser.add_argument_group("ACL Training Parameters")
     group.add_argument("--run_id", type=str, default="acl_run1")
-    group.add_argument("--total_stages", type=int, default=500)
+    group.add_argument("--total_stages", type=int, default=50)
     group.add_argument("--student_steps_per_stage", type=int, default=2048 * 8)
     group.add_argument("--eval_episodes", type=int, default=10)
     group.add_argument("--mastery_threshold", type=float, default=150.0)
-    group.add_argument("--difficulty_increment", type=float, default=0.01)
     group.add_argument("--render", action='store_true')
     group.add_argument("--n_envs", type=int, default=8)
     parser.add_argument('--horizon', type=int, default=3000)
     group.add_argument("--pretrained_model_path", type=str, default=None, help="Path to a pre-trained model to start ACL from.")
     return parser
 
-# ... (hàm sample_task_params và evaluate_student giữ nguyên) ...
-def sample_task_params(difficulty_ratio: float) -> dict:
-    min_spacing = 0.05; max_spacing = 2.0; max_height = 10.0; min_height = 1.5
-    if difficulty_ratio < 0.5:
-        current_spacing = min_spacing + (difficulty_ratio * 2) * (max_spacing - min_spacing); current_height = max_height
-    else:
-        current_spacing = max_spacing; current_height = max_height - ((difficulty_ratio - 0.5) * 2) * (max_height - min_height)
-    low_bounds = EASY_PARAMS; high_bounds = np.array([lim[1] if p > 0 else lim[0] for p, lim in zip(EASY_PARAMS, PARAM_SPACE_LIMS)])
-    current_max = low_bounds + difficulty_ratio * (high_bounds - low_bounds)
-    sampled_terrain_params = np.random.uniform(low=low_bounds, high=current_max)
-    return {"input_vector": sampled_terrain_params[:3], "water_level": sampled_terrain_params[3], "creepers_spacing": current_spacing, "creepers_height": current_height, "creepers_width": 0.5}
+# --- START: Updated task sampling for multi-dimensional curriculum ---
+def sample_task_params(difficulty_vector: np.ndarray, dim_names: list) -> dict:
+    """Samples environment parameters based on a multi-dimensional difficulty vector."""
+    params = {}
+    current_params = {}
+    
+    for i, dim_name in enumerate(dim_names):
+        min_val, max_val = PARAM_SPACE_MAP[dim_name]
+        
+        # Interpolate the current max value for this dimension based on difficulty
+        current_max = min_val + difficulty_vector[i] * (max_val - min_val)
+        
+        # Sample uniformly between the easiest value and the current max
+        # For inverted params like spacing, min_val is harder, so we sample accordingly
+        if min_val > max_val: # Inverted case (e.g., creepers_spacing)
+            sampled_val = np.random.uniform(low=current_max, high=min_val)
+        else: # Normal case
+            sampled_val = np.random.uniform(low=min_val, high=current_max)
+        
+        current_params[dim_name] = sampled_val
 
-def evaluate_student(student_model: BaseAlgorithm, env_id: str, body_type: str, difficulty_ratio: float, num_episodes: int, args: argparse.Namespace, render_mode: str = None, stats_path: str = None) -> float:
-    total_rewards = 0.0; vec_eval_env = None
+    # Map the sampled values back to the environment's expected arguments
+    input_vec = [
+        current_params.get("input_vector_0", 0.0),
+        current_params.get("input_vector_1", 0.0),
+        current_params.get("input_vector_2", 0.0)
+    ]
+    params["input_vector"] = np.array(input_vec)
+    if "water_level" in current_params: params["water_level"] = current_params["water_level"]
+    if "creepers_height" in current_params: params["creepers_height"] = current_params["creepers_height"]
+    if "creepers_spacing" in current_params: params["creepers_spacing"] = current_params["creepers_spacing"]
+    
+    # Creepers need width if they have height
+    if params.get("creepers_height", 0.0) > 0:
+        params["creepers_width"] = 0.5
+    else:
+        params["creepers_width"] = None
+
+    return params
+# --- END: Updated task sampling ---
+
+def evaluate_student(student_model: BaseAlgorithm, env_id: str, body_type: str, 
+                     difficulty_vector: np.ndarray, dim_names: list, 
+                     num_episodes: int, args: argparse.Namespace, render_mode: str = None, stats_path: str = None) -> float:
+    total_rewards = 0.0
     try:
-        def make_eval_env(): return build_and_setup_env(env_id, body_type, sample_task_params(difficulty_ratio), render_mode=render_mode, args=args)
+        def make_eval_env(): 
+            task_params = sample_task_params(difficulty_vector, dim_names)
+            return build_and_setup_env(env_id, body_type, task_params, render_mode=render_mode, args=args)
+        
         vec_eval_env = make_vec_env(make_eval_env, n_envs=1)
         if stats_path and os.path.exists(stats_path):
-            vec_eval_env = VecNormalize.load(stats_path, vec_eval_env); vec_eval_env.training = False; vec_eval_env.norm_reward = False
-        for i in range(num_episodes):
-            obs = vec_eval_env.reset(); done = False; episode_reward = 0.0
+            vec_eval_env = VecNormalize.load(stats_path, vec_eval_env)
+            vec_eval_env.training = False
+            vec_eval_env.norm_reward = False
+
+        for _ in range(num_episodes):
+            obs = vec_eval_env.reset()
+            done = False
             while not done:
-                if render_mode == "human": vec_eval_env.render()
                 action, _ = student_model.predict(obs, deterministic=True)
-                obs, reward, done_vec, info = vec_eval_env.step(action); done = done_vec[0]
-                if done: episode_reward = info[0].get('episode', {}).get('r', 0)
-            total_rewards += episode_reward
+                obs, _, done_vec, info = vec_eval_env.step(action)
+                done = done_vec[0]
+                if done:
+                    total_rewards += info[0].get('episode', {}).get('r', 0)
     finally:
-        if vec_eval_env: vec_eval_env.close()
+        if 'vec_eval_env' in locals() and vec_eval_env: vec_eval_env.close()
     return total_rewards / num_episodes
+
 
 def main(args: argparse.Namespace) -> str:
     if args.env != "parkour":
         print(f"ERROR: ACL training currently supports only 'parkour', got '{args.env}'."); sys.exit(1)
 
-    output_base = f"output/acl/{args.run_id}"; model_dir = os.path.join(output_base, "models")
-    log_dir = os.path.join(output_base, "logs"); stats_path = os.path.join(output_base, "vecnormalize.pkl")
-    os.makedirs(model_dir, exist_ok=True); os.makedirs(log_dir, exist_ok=True)
+    output_base = f"output/acl/{args.run_id}"
+    os.makedirs(output_base, exist_ok=True)
     
-    print(f"\n{'=' * 60}\nStarting ACL training for env '{args.env}' with body '{args.body}'\nUsing STUDENT ALGORITHM: SAC\nOutput directory: {output_base}\n{'=' * 60}")
+    print(f"\n{'=' * 60}\nStarting Multi-Dimensional ACL training for '{args.env}'\n{'=' * 60}")
 
-    render_mode = "human" if args.render else None
-    AGENT_CLASS = SAC
+    # --- ACL Configuration ---
+    dim_names = getattr(args, 'difficulty_dims', [])
+    initial_difficulty = np.array(getattr(args, 'initial_difficulty', [0.0]*len(dim_names)))
+    mastery_order = getattr(args, 'mastery_order', dim_names)
+    increments = getattr(args, 'difficulty_increments', {name: 0.1 for name in dim_names})
     
-    agent_kwargs = getattr(args, 'ppo_config', {})
-    if 'learning_rate_schedule' in agent_kwargs: agent_kwargs['learning_rate'] = parse_schedule(agent_kwargs.pop('learning_rate_schedule'))
-    if 'clip_range_schedule' in agent_kwargs: agent_kwargs.pop('clip_range_schedule')
-    print("Using SAC hyperparameters for student:", agent_kwargs)
-    
-    difficulty_ratio = 0.0; student = None; final_path = os.path.join(model_dir, "student_final.zip")
+    difficulty_vector = initial_difficulty
+    current_focus_dim_idx = 0
+
+    student, final_path = None, os.path.join(output_base, "student_final.zip")
 
     try:
         for stage in range(1, args.total_stages + 1):
-            start_time = time.time()
-            replay_config = getattr(args, 'curriculum_replay', {}); replay_enabled = replay_config.get('enabled', False); replay_ratio = replay_config.get('replay_ratio', 0.2)
-            if replay_enabled: print(f"Curriculum Replay is ENABLED. Replay Ratio: {replay_ratio*100}%")
+            print(f"\n--- Stage {stage}/{args.total_stages} | Focus: '{mastery_order[current_focus_dim_idx]}' ---")
+            print(f"Current Difficulty Vector: {np.round(difficulty_vector, 3)}")
 
             def make_env_with_replay():
-                if replay_enabled and np.random.rand() < replay_ratio and difficulty_ratio > 0:
-                    task_params = sample_task_params(np.random.uniform(0, difficulty_ratio))
-                else:
-                    task_params = sample_task_params(difficulty_ratio)
+                # For replay, sample from a curriculum "box" up to the current difficulty
+                replay_difficulty = np.random.rand(len(dim_names)) * difficulty_vector
+                task_params = sample_task_params(replay_difficulty, dim_names)
                 return build_and_setup_env(args.env, args.body, task_params, args=args, **getattr(args, 'reward_shaping', {}))
+
+            student, _ = train_student_stage(args, stage, student, make_env_with_replay, output_base)
             
-            print(f"\n--- Stage {stage}/{args.total_stages} | Difficulty: {difficulty_ratio:.3f} ---")
-
-            if student:
-                temp_model_path = os.path.join(model_dir, "student_temp.zip"); student.save(temp_model_path)
-                student.get_env().save(stats_path); student.get_env().close(); del student
-            else:
-                temp_model_path = None
-
-            n_envs = 1 if args.render else args.n_envs
-            vec_env = make_vec_env(make_env_with_replay, n_envs=n_envs, seed=getattr(args, 'seed', None))
+            avg_reward = evaluate_student(
+                student, args.env, args.body, difficulty_vector, dim_names, 
+                args.eval_episodes, args, render_mode="human" if args.render else None,
+                stats_path=os.path.join(output_base, "vecnormalize.pkl"))
             
-            if os.path.exists(stats_path):
-                print(f"Loading VecNormalize stats from: {stats_path}"); vec_env = VecNormalize.load(stats_path, vec_env)
-            else:
-                print("Creating new VecNormalize stats."); vec_env = VecNormalize(vec_env, norm_obs=True, norm_reward=True, clip_obs=10.)
+            print(f"Evaluation Avg Reward = {avg_reward:.2f}")
 
-            pretrained_path = getattr(args, 'pretrained_model_path', None)
-            if stage == 1 and pretrained_path and os.path.exists(pretrained_path):
-                print(f"Loading PRE-TRAINED model for first stage from: {pretrained_path}")
-                student = AGENT_CLASS("MlpPolicy", vec_env, verbose=0, tensorboard_log=os.path.join(log_dir, "student"), device="auto", **agent_kwargs)
-                ppo_model = PPO.load(pretrained_path, device="cpu")
-                print("Transferring PPO policy weights to new SAC student...")
-                
-                # START CHANGE: New robust weight transfer
-                # The PPO 'policy_net' is equivalent to the SAC's actor/critic 'net'
-                ppo_shared_net_weights = ppo_model.policy.mlp_extractor.policy_net.state_dict()
-                
-                # SAC's MlpPolicy has an `actor` and `critic` which are the networks we need to update
-                student.actor.load_state_dict(ppo_shared_net_weights, strict=False)
-                student.critic.load_state_dict(ppo_shared_net_weights, strict=False)
-                # END CHANGE
-
-                print("Weight transfer complete.")
-
-            elif temp_model_path and os.path.exists(temp_model_path):
-                print(f"Loading model weights from previous stage: {temp_model_path}")
-                student = AGENT_CLASS.load(temp_model_path, env=vec_env, tensorboard_log=os.path.join(log_dir, "student"), device="auto")
-            else:
-                print("Initializing new SAC model from scratch.")
-                student = AGENT_CLASS("MlpPolicy", vec_env, verbose=0, tensorboard_log=os.path.join(log_dir, "student"), device="auto", **agent_kwargs)
-
-            student.learn(total_timesteps=args.student_steps_per_stage, reset_num_timesteps=False, progress_bar=True)
-            student.get_env().save(stats_path)
-            
-            print(f"Evaluating agent over {args.eval_episodes} episodes..."); eval_model_path = os.path.join(model_dir, "student_eval_temp.zip")
-            student.save(eval_model_path); eval_model = AGENT_CLASS.load(eval_model_path, device="auto")
-            avg_reward = evaluate_student(eval_model, args.env, args.body, difficulty_ratio, args.eval_episodes, args, render_mode=render_mode, stats_path=stats_path)
-            del eval_model
-            
-            print(f"Average reward = {avg_reward:.2f}")
             if avg_reward > args.mastery_threshold:
-                new_diff = min(1.0, difficulty_ratio + args.difficulty_increment)
-                if new_diff > difficulty_ratio:
-                    difficulty_ratio = new_diff; print(f"Mastery achieved! Increasing difficulty to {difficulty_ratio:.3f}")
+                print(f"Mastery achieved for focus '{mastery_order[current_focus_dim_idx]}'!")
+                
+                # Increase difficulty of the current focused dimension
+                focused_dim_name = mastery_order[current_focus_dim_idx]
+                dim_idx_in_vec = dim_names.index(focused_dim_name)
+                increment = increments[focused_dim_name]
+                difficulty_vector[dim_idx_in_vec] = min(1.0, difficulty_vector[dim_idx_in_vec] + increment)
+                
+                # If this dimension is maxed out, move to the next one
+                if difficulty_vector[dim_idx_in_vec] >= 1.0:
+                    print(f"Dimension '{focused_dim_name}' maxed out.")
+                    if current_focus_dim_idx < len(mastery_order) - 1:
+                        current_focus_dim_idx += 1
+                        print(f"Switching focus to '{mastery_order[current_focus_dim_idx]}'.")
+                    else:
+                        print("All curriculum dimensions mastered!")
             else:
                 print(f"Below threshold ({args.mastery_threshold:.2f}). Keeping difficulty unchanged.")
-
-            if stage % 25 == 0 or stage == args.total_stages:
-                model_path = os.path.join(model_dir, f"student_{args.run_id}_stage_{stage}.zip")
-                student.save(model_path); print(f"Model saved: {model_path}")
-
-            print(f"Stage time: {time.time() - start_time:.2f}s")
 
     except KeyboardInterrupt:
         print("\nTraining interrupted by user.")
     finally:
-        if student and hasattr(student, 'env') and student.get_env():
-            student.get_env().save(stats_path); print(f"Final VecNormalize stats saved to: {stats_path}")
-            student.save(final_path); student.get_env().close()
+        if student:
+            stats_path = os.path.join(output_base, "vecnormalize.pkl")
+            student.get_env().save(stats_path)
+            student.save(final_path)
+            student.get_env().close()
 
-    print(f"\n{'=' * 60}\nACL training complete."); print(f"Final Student model saved at: {final_path}")
+    print(f"\nACL training complete. Final model saved at: {final_path}")
     return final_path
+
+def train_student_stage(args, stage, student_model, env_fn, output_base):
+    model_dir = os.path.join(output_base, "models"); os.makedirs(model_dir, exist_ok=True)
+    log_dir = os.path.join(output_base, "logs"); os.makedirs(log_dir, exist_ok=True)
+    stats_path = os.path.join(output_base, "vecnormalize.pkl")
+    
+    if student_model:
+        student_model.get_env().save(stats_path)
+        student_model.get_env().close()
+
+    n_envs = 1 if args.render else args.n_envs
+    vec_env = make_vec_env(env_fn, n_envs=n_envs, seed=getattr(args, 'seed', None))
+    vec_env = VecNormalize.load(stats_path, vec_env) if os.path.exists(stats_path) else VecNormalize(vec_env)
+
+    agent_kwargs = getattr(args, 'ppo_config', {}) # Note: it's SAC config
+    AGENT_CLASS = SAC
+
+    if stage == 1 and args.pretrained_model_path:
+        print(f"Loading PRE-TRAINED PPO model for first stage from: {args.pretrained_model_path}")
+        student = AGENT_CLASS("MlpPolicy", vec_env, verbose=0, tensorboard_log=log_dir, device="auto", **agent_kwargs)
+        ppo_model = PPO.load(args.pretrained_model_path, device="cpu")
+        print("Transferring PPO policy weights to new SAC student...")
+        ppo_shared_net_weights = ppo_model.policy.mlp_extractor.policy_net.state_dict()
+        student.actor.load_state_dict(ppo_shared_net_weights, strict=False)
+        student.critic.load_state_dict(ppo_shared_net_weights, strict=False)
+        print("Weight transfer complete.")
+    elif student_model:
+        student = AGENT_CLASS.load(student_model.save_path, env=vec_env, tensorboard_log=log_dir, device="auto")
+    else:
+        student = AGENT_CLASS("MlpPolicy", vec_env, verbose=0, tensorboard_log=log_dir, device="auto", **agent_kwargs)
+        
+    student.learn(total_timesteps=args.student_steps_per_stage, reset_num_timesteps=False, progress_bar=True)
+    
+    if stage % 10 == 0 or stage == args.total_stages:
+        save_path = os.path.join(model_dir, f"student_stage_{stage}.zip")
+        student.save(save_path)
+        print(f"Model checkpoint saved: {save_path}")
+
+    return student, stats_path

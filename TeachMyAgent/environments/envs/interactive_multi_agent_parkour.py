@@ -1,5 +1,3 @@
-# TeachMyAgent/environments/envs/interactive_multi_agent_parkour.py
-
 import math
 import numpy as np
 import gymnasium as gym

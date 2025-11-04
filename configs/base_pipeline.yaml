@@ -1,0 +1,20 @@
+PIPELINE_SETTINGS:
+  transfer_learning: true
+
+STAGES:
+  PPO:
+    enabled: true
+    config_path: "configs/algorithms/ppo_default.yaml"
+    env_config_path: "configs/environments/parkour_default.yaml"
+  ACL:
+    enabled: true
+    config_path: "configs/algorithms/acl_default.yaml"
+    env_config_path: "configs/environments/parkour_default.yaml"
+  MARL:
+    enabled: true 
+    config_path: "configs/algorithms/marl_default.yaml"
+
+WATCH:
+  enabled: false 
+  fast_forward: true
+  num_episodes: 5

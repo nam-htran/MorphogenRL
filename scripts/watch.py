@@ -1,4 +1,3 @@
-# scripts/watch.py
 import argparse
 import time
 import os
@@ -80,7 +79,7 @@ def _watch_sb3(args):
         print(f"Error loading model from '{args.model_path}': {e}")
         sys.exit(1)
 
-    # --- Start: User-friendly Error Check ---
+    # --- START FIX: User-friendly Error Check for observation space mismatch ---
     env_obs_space = venv_unnormalized.observation_space
     model_obs_space = temp_model.observation_space
 
@@ -95,7 +94,7 @@ def _watch_sb3(args):
         print("!"*80 + "\n")
         venv_unnormalized.close()
         sys.exit(1)
-    # --- End: User-friendly Error Check ---
+    # --- END FIX ---
 
     # If shapes match, proceed to load VecNormalize and the model properly
     print("Observation spaces match. Loading environment with normalization stats...")
@@ -209,7 +208,9 @@ def _watch_rllib(args):
                 module = algo.get_module(policy_id)
                 obs_tensor = torch.from_numpy(obs[agent_id]).unsqueeze(0)
                 with torch.no_grad():
+                    # Get action distribution from the model's forward pass
                     action_dist_inputs = module.forward_inference({"obs": obs_tensor})['action_dist_inputs']
+                # For deterministic action, take the mean of the distribution
                 mean, _ = torch.chunk(action_dist_inputs, 2, dim=-1)
                 actions[agent_id] = mean.squeeze(0).cpu().numpy()
 
@@ -235,10 +236,13 @@ def main(args: argparse.Namespace):
     if framework == 'auto':
         if os.path.isdir(args.model_path):
             framework = 'rllib'
+            print("Auto-detected framework: RLlib (directory path provided)")
         elif os.path.isfile(args.model_path) and args.model_path.lower().endswith('.zip'):
             framework = 'sb3'
+            print("Auto-detected framework: Stable-Baselines3 (.zip file provided)")
         else:
             print(f"ERROR: Could not autodetect framework from path '{args.model_path}'.")
+            print("Please specify --framework sb3 (for .zip files) or --framework rllib (for checkpoint directories).")
             sys.exit(1)
 
     try:

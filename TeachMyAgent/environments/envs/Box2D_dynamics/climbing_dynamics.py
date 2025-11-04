@@ -7,6 +7,7 @@ class ClimbingDynamics(object):
     # START FIX: Add __init__ to create a list for joints that need to be destroyed
     def __init__(self):
         self.joints_to_destroy = []
+    # END FIX
         
     def before_step_climbing_dynamics(self, actions, body, world):
         '''

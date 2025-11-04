@@ -1,13 +1,13 @@
 
 ===== .\run.py =====
-# run.py
+
 import argparse
 import os
 import sys
 import yaml
 from types import SimpleNamespace
 import ray
-from typing import Any, Callable
+from typing import Any, Callable, Mapping
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
@@ -19,24 +19,59 @@ from preprocessing import convert_weight
 from scripts import check_all as check_all_script
 from utils.seeding import set_seed
 
-def ray_init_and_run(func, args):
-    if not ray.is_initialized():
-        print("Initializing Ray...")
-        ray.init(ignore_reinit_error=True)
-    
-    try:
-        return func(args) # START CHANGE: Return result from function
-    finally:
-        if ray.is_initialized():
-            ray.shutdown()
-            print("Ray has been shut down.")
-
 def load_config(config_path: str) -> dict:
     if not os.path.exists(config_path):
         print(f"ERROR: Config not found at '{config_path}'")
         sys.exit(1)
     with open(config_path, 'r', encoding='utf-8') as f:
         return yaml.safe_load(f)
+
+def deep_update(original, new_dict):
+    for key, value in new_dict.items():
+        if key in original and isinstance(original[key], Mapping) and isinstance(value, Mapping):
+            deep_update(original[key], value)
+        else:
+            original[key] = value
+    return original
+
+def load_and_merge_configs(base_config_path: str) -> dict:
+    print(f"Loading base pipeline config from: {base_config_path}")
+    base_config = load_config(base_config_path)
+    
+    final_config = base_config.copy()
+    
+    for stage_name, stage_info in base_config.get('STAGES', {}).items():
+        if not stage_info.get('enabled', False):
+            final_config[stage_name] = {'enabled': False}
+            continue
+
+        print(f"Loading configs for stage: {stage_name}")
+        
+        algo_config_path = stage_info['config_path']
+        algo_config = load_config(algo_config_path)
+        
+        env_config = {}
+        if 'env_config_path' in stage_info:
+            env_config_path = stage_info['env_config_path']
+            env_config = load_config(env_config_path)
+
+        merged_stage_config = deep_update(env_config, algo_config)
+        merged_stage_config['enabled'] = True
+        final_config[stage_name] = merged_stage_config
+        
+    return final_config
+
+def ray_init_and_run(func, args):
+    if not ray.is_initialized():
+        print("Initializing Ray...")
+        ray.init(ignore_reinit_error=True)
+    
+    try:
+        return func(args)
+    finally:
+        if ray.is_initialized():
+            ray.shutdown()
+            print("Ray has been shut down.")
 
 def print_header(title: str):
     width = 80
@@ -62,25 +97,19 @@ def run_task(func: Callable, args_namespace: SimpleNamespace, task_name: str) ->
         sys.exit(1)
 
 def run_pipeline(args: SimpleNamespace):
-    config = load_config(args.config)
+    config = load_and_merge_configs(args.config)
     watch_config = config.get('WATCH', {})
     
-    # START CHANGE: Transfer Learning Logic
     pipeline_settings = config.get('PIPELINE_SETTINGS', {})
     transfer_learning_enabled = pipeline_settings.get('transfer_learning', False)
     pretrained_model_path = None
     if transfer_learning_enabled:
         print_header("TRANSFER LEARNING IS ENABLED IN PIPELINE")
-    # END CHANGE
     
     default_params = {
         'render': False, 'width': args.width, 'height': args.height, 'fullscreen': args.fullscreen,
-        'horizon': 3000, 'roughness': None, 'stump_height': None,
-        'stump_width': None, 'obstacle_spacing': None, 'input_vector': None,
-        'water_level': None, 'creepers_width': None, 'creepers_height': None,
-        'creepers_spacing': None, 'check_env': False, 'shared_policy': False,
-        'use_cc': False, 'seed': args.seed,
-        'pretrained_model_path': None # Add default
+        'check_env': False, 'seed': args.seed,
+        'pretrained_model_path': None
     }
     
     for stage_name in ['PPO', 'ACL', 'MARL']:
@@ -88,13 +117,14 @@ def run_pipeline(args: SimpleNamespace):
         if not stage_config.get('enabled', False):
             continue
         
-        final_config = {**default_params, **stage_config}
+        final_config = {**default_params, **stage_config, **stage_config.get('env_params', {})}
         
-        # START CHANGE: Inject pre-trained model path
         if transfer_learning_enabled and pretrained_model_path:
-            final_config['pretrained_model_path'] = pretrained_model_path
-            print(f"INFO: Stage '{stage_name}' will start from pre-trained model: {pretrained_model_path}")
-        # END CHANGE
+            if stage_name != 'MARL':
+                final_config['pretrained_model_path'] = pretrained_model_path
+                print(f"INFO: Stage '{stage_name}' will start from pre-trained model: {pretrained_model_path}")
+            else:
+                print("INFO: MARL stage will be trained from scratch (transfer learning skipped for MARL).")
             
         stage_args = SimpleNamespace(**final_config)
 
@@ -104,25 +134,22 @@ def run_pipeline(args: SimpleNamespace):
         elif stage_name == 'ACL':
             checkpoint_path = run_task(train_acl.main, stage_args, "ACL Training")
         elif stage_name == 'MARL':
-            # MARL needs Ray, so we wrap it
             checkpoint_path = ray_init_and_run(train_marl.main, stage_args)
 
-        # START CHANGE: Update pre-trained path for the next stage
         if transfer_learning_enabled and checkpoint_path:
             pretrained_model_path = checkpoint_path
             print(f"INFO: Stage '{stage_name}' finished. Model for next stage is now: {pretrained_model_path}")
-        # END CHANGE
 
         if watch_config.get('enabled', False) and checkpoint_path:
             if stage_name == 'MARL':
                 print_header("WATCH MARL (INFO)")
-                print("RLlib MARL checkpoints are complex and not directly supported by 'watch.py'.")
-                print(f"Best MARL checkpoint from tuning saved at: {checkpoint_path}")
+                print("To watch the MARL agent, run the following command:")
+                print(f"python run.py watch --framework rllib --mode {stage_args.mode} --body {stage_args.body} --model_path {checkpoint_path}")
             else:
+                framework = 'sb3'
                 watch_args = SimpleNamespace(
                     model_path=checkpoint_path,
-                    framework='sb3', num_episodes=5,
-                    env=stage_args.env, body=stage_args.body,
+                    framework=framework,
                     width=args.width, height=args.height, fullscreen=args.fullscreen,
                     **watch_config, **vars(stage_args)
                 )
@@ -134,10 +161,8 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser(description="Main entry point for TeachMyAgent.", formatter_class=argparse.RawTextHelpFormatter)
     subparsers = parser.add_subparsers(dest='command', required=True, help="Available commands")
 
-    ray_commands = ['pipeline-marl-stage'] # Internal command for pipeline
-    
     pipeline_parser = subparsers.add_parser('pipeline', help="Run the full training pipeline from a YAML config file.")
-    pipeline_parser.add_argument('--config', type=str, default='configs/main_pipeline.yaml', help="Path to the main pipeline configuration file.")
+    pipeline_parser.add_argument('--config', type=str, default='configs/base_pipeline.yaml', help="Path to the base pipeline configuration file.")
     pipeline_parser.add_argument('--width', type=int, help="Override window width for watching.")
     pipeline_parser.add_argument('--height', type=int, help="Override window height for watching.")
     pipeline_parser.add_argument('--fullscreen', action='store_true', help="Override fullscreen for watching.")
@@ -155,16 +180,14 @@ if __name__ == '__main__':
     acl_parser.set_defaults(func=lambda args: run_task(train_acl.main, args, "ACL Training"))
     
     marl_parser = train_subparsers.add_parser('marl', help="Train MARL (multi-agent)."); train_marl.add_marl_args(marl_parser)
-    # START CHANGE: MARL is now handled by ray_init_and_run
     marl_parser.set_defaults(func=lambda args: ray_init_and_run(train_marl.main, args))
-    # END CHANGE
     
     eval_parser = subparsers.add_parser('evaluate', help="Evaluate a trained single-agent model.")
     evaluate_script.add_evaluation_args(eval_parser)
     eval_parser.add_argument('--seed', type=int, default=None, help="Global seed for reproducibility.")
     eval_parser.set_defaults(func=lambda args: run_task(evaluate_script.evaluate_agent, args, "Evaluate Model"))
 
-    watch_parser = subparsers.add_parser('watch', help="Watch a trained single-agent model."); watch.add_watch_args(watch_parser)
+    watch_parser = subparsers.add_parser('watch', help="Watch a trained model (SB3 & RLlib)."); watch.add_watch_args(watch_parser)
     watch_parser.add_argument('--seed', type=int, default=None, help="Global seed for reproducibility.")
     watch_parser.set_defaults(func=lambda args: run_task(watch.main, args, "Watch Model"))
     
@@ -176,26 +199,30 @@ if __name__ == '__main__':
     check_parser.add_argument('--seed', type=int, default=None, help="Global seed for reproducibility.")
     check_parser.set_defaults(func=lambda args: run_task(check_all_script.main, args, "Environment Check"))
     
+    # START CHANGE: Add --render-fullscreen argument for test_suite
     test_parser = subparsers.add_parser('test_suite', help="Run the quick, integrated project test suite.")
     test_parser.add_argument('--seed', type=int, default=None, help="Global seed for reproducibility.")
+    test_parser.add_argument('--test-render', action='store_true', help="Also run a visual test for the rendering window.")
+    test_parser.add_argument('--render-fullscreen', action='store_true', help="Use fullscreen for the rendering test.")
     test_parser.set_defaults(func=test_suite_script.main)
+    # END CHANGE
     
     convert_parser = subparsers.add_parser('convert_weights', help="Convert legacy TF1 weights to PyTorch.")
     convert_parser.add_argument('--seed', type=int, default=None, help="Global seed for reproducibility.")
     convert_parser.set_defaults(func=convert_weight.convert_tf1_to_pytorch)
-
+    
     args = parser.parse_args()
     
     seed = args.seed
     if args.command == 'pipeline' and seed is None:
         try:
-            config = load_config(args.config)
+            config = load_and_merge_configs(args.config)
             for stage_name in ['PPO', 'ACL', 'MARL']:
                 stage_config = config.get(stage_name, {})
                 if stage_config.get('enabled', False):
                     seed_from_config = stage_config.get('seed')
                     if seed_from_config is not None:
-                        print(f"INFO: Using seed '{seed_from_config}' from '{stage_name}' configuration in '{args.config}'.")
+                        print(f"INFO: Using seed '{seed_from_config}' from '{stage_name}' configuration.")
                         seed = seed_from_config
                         break 
         except Exception as e:
@@ -207,149 +234,172 @@ if __name__ == '__main__':
         args.seed = seed
     
     try:
-        # START CHANGE: Simplified main execution logic
         if hasattr(args, 'func'):
-             is_no_args_func = 'args' not in args.func.__code__.co_varnames and args.func.__code__.co_argcount == 0
-             if is_no_args_func:
-                  run_task(args.func, None, args.command.upper())
-             else:
-                  # Ray-dependent functions are now handled by their own wrappers
-                  if args.command == 'pipeline':
-                      run_pipeline(args)
-                  else:
-                      args.func(args)
+             args.func(args)
         else:
             parser.print_help()
-        # END CHANGE
     finally:
         if ray.is_initialized():
             ray.shutdown()
             print("Final Ray shutdown completed.")
 
-===== .\configs\main_pipeline.yaml =====
+===== .\configs\base_pipeline.yaml =====
 PIPELINE_SETTINGS:
   transfer_learning: true
+
+STAGES:
+  PPO:
+    enabled: true
+    config_path: "configs/algorithms/ppo_default.yaml"
+    env_config_path: "configs/environments/parkour_default.yaml"
+  ACL:
+    enabled: true
+    config_path: "configs/algorithms/acl_default.yaml"
+    env_config_path: "configs/environments/parkour_default.yaml"
+  MARL:
+    enabled: true 
+    config_path: "configs/algorithms/marl_default.yaml"
 
 WATCH:
   enabled: false 
   fast_forward: true
-  auto_skip_stuck: true
+  num_episodes: 5
 
-PPO:
+===== .\configs\algorithms\acl_default.yaml =====
+run_id: "acl_generalist_run"
+student_steps_per_stage: 250000
+total_stages: 20
+
+eval_episodes: 10
+mastery_threshold: -50.0
+n_envs: 32
+seed: 42
+
+difficulty_dims:
+  - input_vector_0
+  - input_vector_1
+  - input_vector_2
+  - water_level
+  - creepers_height
+  - creepers_spacing
+
+initial_difficulty: [0.0, 0.0, 0.0, 0.0, 0.0, 1.0]
+
+mastery_order:
+  - input_vector_0
+  - input_vector_1
+  - input_vector_2
+  - water_level
+  - creepers_height
+  - creepers_spacing
+
+difficulty_increments:
+  input_vector_0: 0.1
+  input_vector_1: 0.1
+  input_vector_2: 0.1
+  water_level: 0.05
+  creepers_height: 0.1
+  creepers_spacing: -0.05
+
+
+curriculum_replay:
   enabled: true
-  run_id: "ultimate_pipeline_ppo_pretrain"
-  env: "parkour"
-  body: "classic_bipedal"
-  
-  total_timesteps: 2000000 
-  save_freq: 500000
-  n_envs: 32
-  horizon: 5000
+  replay_ratio: 0.25
 
-  reward_shaping:
-    progress_multiplier: 200.0
-    velocity_multiplier: 0.5
-    torque_penalty_multiplier: 30.0
-    alive_bonus: 0.02
+reward_shaping:
+  progress_multiplier: 200.0
+  velocity_multiplier: 0.5
+  torque_penalty_multiplier: 30.0
+  alive_bonus: 0.0
+  body_angle_penalty: 0.2
+  low_hull_penalty: 0.5
 
-  ppo_config:
-    gamma: 0.99 
-    n_steps: 4096
-    ent_coef: 0.005
-    learning_rate: 3e-4
-    n_epochs: 10
-    batch_size: 64
+ppo_config:
+  learning_rate: 0.0003
+  buffer_size: 1000000 
+  batch_size: 256
+  ent_coef: 'auto'
+  gamma: 0.99
+  learning_starts: 10000
 
-ACL:
-  enabled: true
-  run_id: "ultimate_pipeline_acl_generalist"
-  env: "parkour"
-  body: "classic_bipedal"
-  
-  student_steps_per_stage: 250000
-  total_stages: 24 
+===== .\configs\algorithms\marl_default.yaml =====
+run_id: "marl_coop_run"
+mode: "interactive"
+n_agents: 2
+iterations: 150
+num_workers: 4
+num_gpus: 1
 
-  eval_episodes: 10
-  mastery_threshold: -50.0
-  difficulty_increment: 0.042
-  horizon: 5000
-  n_envs: 32
-  seed: 42
-  
-  curriculum_replay:
-    enabled: true
-    replay_ratio: 0.25
+reward_type: "shared"
+shared_policy: true
+use_cc: true
 
-  reward_shaping:
-    progress_multiplier: 200.0
-    velocity_multiplier: 0.5
-    torque_penalty_multiplier: 30.0
-    alive_bonus: 0.02
-
-  ppo_config:
-    learning_rate: 0.0003
-    buffer_size: 1000000 
-    batch_size: 256
-    ent_coef: 'auto'
-    gamma: 0.99
-    learning_starts: 10000
-
-MARL:
-  enabled: true
-  run_id: "ultimate_pipeline_marl_cooperation"
-  mode: "interactive"
-  n_agents: 2
-  body: "classic_bipedal"
-  num_workers: 4
-  num_gpus: 1
-  horizon: 5000
-  
-  reward_type: "shared"
-  shared_policy: true
-  use_cc: true
-  use_tune: false
-  
-  iterations: 150
-  
-  ppo_config:
+use_tune: false 
+tune_config:
+  num_samples: 20 
+  stopper:
+    patience: 5
+    metric: "episode_reward_mean"
+  search_space:
     training:
-      gamma: 0.99
-      lr: 0.0003
-      lambda_: 0.95
-      clip_param: 0.2
-      entropy_coeff: 0.01
-      train_batch_size: 16384 
-    
+      lr: "tune.loguniform(1e-5, 1e-3)"
+      gamma: "tune.choice([0.99, 0.995])"
+      lambda_: "tune.uniform(0.9, 1.0)"
+      clip_param: "tune.choice([0.1, 0.2, 0.3])"
+      entropy_coeff: "tune.loguniform(0.001, 0.05)"
     model:
-      fcnet_hiddens: [64, 64] 
-      fcnet_activation: "tanh"
-      
-    env_runners:
-      rollout_fragment_length: 1024
+      fcnet_hiddens: "tune.choice([[64, 64], [128, 128], [256, 256]])"
 
-===== .\output\marl\test_suite_transfer_marl\rllib_checkpoint.json =====
-{"class_and_ctor_args_file": "class_and_ctor_args.pkl", "state_file": "algorithm_state", "ray_version": "2.50.1", "ray_commit": "7cf6817996f5304b5c808453a997fc1570dcde25", "checkpoint_version": "2.1"}
+ppo_config:
+  training:
+    gamma: 0.99
+    lr: 0.0003
+    lambda_: 0.95
+    clip_param: 0.2
+    entropy_coeff: 0.01
+    train_batch_size: 16384 
+  
+  model:
+    fcnet_hiddens: [128, 128] 
+    fcnet_activation: "tanh"
+    
+  env_runners:
+    rollout_fragment_length: 1024
 
-===== .\output\marl\test_suite_transfer_marl\env_runner\metadata.json =====
-{"class_and_ctor_args_file": "class_and_ctor_args.pkl", "state_file": "state", "ray_version": "2.50.1", "ray_commit": "7cf6817996f5304b5c808453a997fc1570dcde25", "checkpoint_version": "2.1"}
+===== .\configs\algorithms\ppo_default.yaml =====
+run_id: "ppo_parkour_run"
+total_timesteps: 2000000 
+save_freq: 500000
+n_envs: 32
+seed: 42
 
-===== .\output\marl\test_suite_transfer_marl\env_runner\env_to_module_connector\metadata.json =====
-{"class_and_ctor_args_file": "class_and_ctor_args.pkl", "state_file": "state", "ray_version": "2.50.1", "ray_commit": "7cf6817996f5304b5c808453a997fc1570dcde25", "checkpoint_version": "2.1"}
+reward_shaping:
+  progress_multiplier: 200.0
+  velocity_multiplier: 0.5
+  torque_penalty_multiplier: 30.0
+  alive_bonus: 0.0
+  body_angle_penalty: 0.2
+  low_hull_penalty: 0.5
 
-===== .\output\marl\test_suite_transfer_marl\env_runner\module_to_env_connector\metadata.json =====
-{"class_and_ctor_args_file": "class_and_ctor_args.pkl", "state_file": "state", "ray_version": "2.50.1", "ray_commit": "7cf6817996f5304b5c808453a997fc1570dcde25", "checkpoint_version": "2.1"}
+ppo_config:
+  gamma: 0.99 
+  n_steps: 4096
+  ent_coef: 0.005
+  learning_rate: 3e-4
+  n_epochs: 10
+  batch_size: 64
 
-===== .\output\marl\test_suite_transfer_marl\learner_group\metadata.json =====
-{"class_and_ctor_args_file": "class_and_ctor_args.pkl", "state_file": "state", "ray_version": "2.50.1", "ray_commit": "7cf6817996f5304b5c808453a997fc1570dcde25", "checkpoint_version": "2.1"}
+===== .\configs\environments\parkour_default.yaml =====
+env: "parkour"
+body: "classic_bipedal"
+horizon: 5000
 
-===== .\output\marl\test_suite_transfer_marl\learner_group\learner\metadata.json =====
-{"class_and_ctor_args_file": "class_and_ctor_args.pkl", "state_file": "state", "ray_version": "2.50.1", "ray_commit": "7cf6817996f5304b5c808453a997fc1570dcde25", "checkpoint_version": "2.1"}
-
-===== .\output\marl\test_suite_transfer_marl\learner_group\learner\rl_module\metadata.json =====
-{"class_and_ctor_args_file": "class_and_ctor_args.pkl", "state_file": "module_state", "ray_version": "2.50.1", "ray_commit": "7cf6817996f5304b5c808453a997fc1570dcde25", "checkpoint_version": "2.1"}
-
-===== .\output\marl\test_suite_transfer_marl\learner_group\learner\rl_module\shared_policy\metadata.json =====
-{"class_and_ctor_args_file": "class_and_ctor_args.pkl", "state_file": "module_state", "ray_version": "2.50.1", "ray_commit": "7cf6817996f5304b5c808453a997fc1570dcde25", "checkpoint_version": "2.1"}
+env_params:
+  input_vector: [-0.25, 0.8, 0.0]
+  water_level: 0.1
+  creepers_width: 0.25
+  creepers_height: 2.0
+  creepers_spacing: 1.5
 
 ===== .\preprocessing\convert_weight.py =====
 import tensorflow as tf
@@ -1064,22 +1114,22 @@ if __name__ == '__main__':
 
 
 ===== .\scripts\test_suite.py =====
-# scripts/test_suite.py
 import argparse
 import os
 import sys
 import yaml
 from types import SimpleNamespace
+import numpy as np
+import time 
 
 # Add project root to path
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
+from TeachMyAgent.environments.envs.bodies.BodiesEnum import BodiesEnum
+from utils.env_utils import build_and_setup_env, setup_render_window # Import setup_render_window
 from preprocessing import convert_weight
-from scripts import demo as demo_script
-from scripts import train_ppo
-from scripts import train_acl
-from scripts import train_marl
-from run import ray_init_and_run # Import the wrapper for Ray
+from scripts import train_ppo, train_acl
+from run import ray_init_and_run
 
 def print_header(text, char='='):
     width = 80
@@ -1087,136 +1137,178 @@ def print_header(text, char='='):
     print(f"{text:^{width}}")
     print(char * width)
 
-def run_test(func, args_namespace, test_name):
+def run_test(func, test_name, args_namespace=None):
     print_header(f"RUNNING TEST: {test_name.upper()}", char='-')
-    if args_namespace:
-        # Print args but hide potentially long lists/dicts for cleaner logs
-        clean_args = {k: v if not isinstance(v, (dict, list)) else f"<{type(v).__name__}>" for k, v in vars(args_namespace).items()}
-        print(f"Args: {clean_args}")
-        
     try:
-        if test_name.startswith("MARL"): # MARL requires Ray initialization
-            result = ray_init_and_run(func, args_namespace)
+        if args_namespace:
+            result = func(args_namespace)
         else:
-            result = func(args_namespace) if args_namespace else func()
+            result = func()
         print(f"✅ SUCCESS: {test_name} completed.")
         return result, True
-    except KeyboardInterrupt:
-        print(f"❌ FAILURE: Test '{test_name}' was interrupted by the user.")
-        return None, False
     except Exception:
         print(f"❌ FAILURE: {test_name} failed.")
         import traceback
         traceback.print_exc()
         return None, False
 
-def load_main_config():
-    """Load main configuration from main_pipeline.yaml."""
-    config_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'configs', 'main_pipeline.yaml')
-    if not os.path.exists(config_path):
-        print(f"ERROR: Config file not found at {config_path}")
-        sys.exit(1)
-    with open(config_path, 'r') as f:
-        return yaml.safe_load(f)
+# --- Test Functions ---
+def test_body_creation():
+    """Attempts to instantiate every body in BodiesEnum."""
+    print("Testing instantiation of all agent bodies...")
+    all_bodies = [e.name for e in BodiesEnum]
+    created_bodies = []
+    for body_name in all_bodies:
+        try:
+            body_class = BodiesEnum[body_name].value
+            if "density" in body_class.__init__.__code__.co_varnames:
+                 body_class(scale=30.0, density=1.0)
+            else:
+                 body_class(scale=30.0)
+            created_bodies.append(body_name)
+        except Exception as e:
+            print(f"  - Failed to create '{body_name}': {e}")
+            raise
+    print(f"Successfully created {len(created_bodies)}/{len(all_bodies)} bodies.")
+    return True
 
-def main(args=None):
-    print_header("STARTING TRANSFER LEARNING PIPELINE TEST SUITE")
+def test_env_parameterization():
+    """Tests if the parkour environment can be parameterized correctly."""
+    print("Testing parkour environment parameterization...")
+    env_args = SimpleNamespace(horizon=100)
+    build_and_setup_env('parkour', 'classic_bipedal', {}, args=env_args).close()
     
-    main_config = load_main_config()
+    custom_params = {"input_vector": np.array([0.1, -0.2, 0.3]), "water_level": 0.5, "creepers_height": 0.0}
+    env = build_and_setup_env('parkour', 'classic_bipedal', custom_params, args=env_args)
+    assert env.unwrapped.creepers_height == 0.0, "Creeper height not set correctly"
+    env.close()
+    
+    print("Environment parameterization seems correct.")
+    return True
+
+def test_reward_function_sanity():
+    """Runs a few steps and checks if the reward is a valid float."""
+    print("Running reward function sanity check...")
+    env_args = SimpleNamespace(horizon=100)
+    env = build_and_setup_env('parkour', 'classic_bipedal', {}, args=env_args)
+    env.reset()
+    for _ in range(5):
+        action = env.action_space.sample()
+        _, reward, _, _, _ = env.step(action)
+        is_float = isinstance(reward, float) or np.issubdtype(type(reward), np.floating)
+        assert is_float, f"Reward is not a float, but {type(reward)}"
+    env.close()
+    print("Reward function returns valid float values.")
+    return True
+
+# START CHANGE: Updated rendering test to be more interactive and support fullscreen
+def test_rendering_popup(args):
+    """
+    Tests if the rendering window can open, run with random actions, and close.
+    """
+    print("Testing rendering window popup...")
+    env = None
+    try:
+        # Use args from the test_suite command to control rendering
+        render_args = SimpleNamespace(
+            fullscreen=args.render_fullscreen, 
+            width=None if args.render_fullscreen else 800, # Use a larger default window
+            height=None if args.render_fullscreen else 600,
+            horizon=200 # Run for a bit longer
+        )
+        env = build_and_setup_env('parkour', 'classic_bipedal', {}, render_mode="human", args=render_args)
+        
+        # Use the utility to setup window size correctly
+        setup_render_window(env, render_args)
+
+        env.reset()
+        if args.render_fullscreen:
+            print("  - A fullscreen window should appear for ~4 seconds...")
+        else:
+            print(f"  - A {render_args.width}x{render_args.height} window should appear for ~4 seconds...")
+        
+        for i in range(render_args.horizon):
+            # Take a random action
+            action = env.action_space.sample()
+            env.step(action)
+            
+            # Render the environment
+            env.render()
+            
+            if env.unwrapped.viewer and env.unwrapped.viewer.window and env.unwrapped.viewer.window.has_exit:
+                print("  - Window closed by user during test.")
+                break
+            time.sleep(1.0 / 50.0) # Limit to 50 FPS
+        
+        print("  - Rendering test loop completed without crashing.")
+        return True
+    finally:
+        if env:
+            env.close()
+            print("  - Environment and rendering window closed successfully.")
+# END CHANGE
+
+def main(args): 
+    print_header("STARTING EXPANDED PROJECT TEST SUITE")
     failed_tests = []
-
-    # START CHANGE: Define default parameters that might be missing from YAML
-    default_test_params = {
-        'render': False,
-        'fullscreen': False,
-        'width': None,
-        'height': None,
-        'seed': None, # Let the test run without a fixed seed unless specified
-        'pretrained_model_path': None
-    }
-    # END CHANGE
-
-    # --- Test 1: Prerequisite - Weight conversion ---
-    _, success = run_test(convert_weight.convert_tf1_to_pytorch, None, "Prerequisite: Convert Weight")
-    if not success:
-        failed_tests.append("Convert Weight")
-        
-    # --- SEQUENTIAL TRANSFER LEARNING TEST ---
-    ppo_model_path, acl_model_path = None, None
     
-    # --- Step 1: PPO Pre-training (Micro-run) ---
-    if 'PPO' in main_config and not failed_tests:
-        # START CHANGE: Combine defaults with loaded config
-        ppo_config = {**default_test_params, **main_config['PPO']}
-        # END CHANGE
+    print_header("GROUP 1: SANITY CHECKS", char='*')
+    
+    if args.test_render:
+        # Pass the args object to the test function
+        _, success = run_test(lambda: test_rendering_popup(args), "Rendering Window Popup")
+        if not success: failed_tests.append("Rendering Window Popup")
+    else:
+        print("\nSkipping rendering test. Use the --test-render flag to run it.")
+
+    _, success = run_test(test_body_creation, "Body Creation")
+    if not success: failed_tests.append("Body Creation")
+    
+    _, success = run_test(test_env_parameterization, "Environment Parameterization")
+    if not success: failed_tests.append("Environment Parameterization")
+
+    _, success = run_test(test_reward_function_sanity, "Reward Function Sanity Check")
+    if not success: failed_tests.append("Reward Function Sanity Check")
+
+    print_header("GROUP 2: INTEGRATION TESTS", char='*')
+
+    _, success = run_test(convert_weight.convert_tf1_to_pytorch, "Prerequisite: Convert Weight")
+    if not success: failed_tests.append("Convert Weight")
         
-        ppo_config.update({
-            'run_id': "test_suite_transfer_ppo",
-            'total_timesteps': 512, 
-            'n_envs': 2,
-            'save_freq': 1024,
-        })
-        ppo_args = SimpleNamespace(**ppo_config)
-        ppo_model_path, success = run_test(train_ppo.main, ppo_args, "PPO Pre-training Stage")
-        if not success:
-            failed_tests.append("PPO Pre-training")
+    ppo_model_path = None
+    
+    if not failed_tests:
+        ppo_args = SimpleNamespace(
+            env='parkour', body='classic_bipedal', run_id="test_suite_ppo",
+            total_timesteps=512, n_envs=2, save_freq=1024, seed=42, horizon=256,
+            reward_shaping={'progress_multiplier': 1.0}, ppo_config={'n_steps': 128},
+            render=False 
+        )
+        ppo_model_path, success = run_test(train_ppo.main, "PPO Micro-Training", args_namespace=ppo_args)
+        if not success: failed_tests.append("PPO Micro-Training")
 
-    # --- Step 2: ACL Generalization (Micro-run with Transfer) ---
-    if 'ACL' in main_config and ppo_model_path and not failed_tests:
-        # START CHANGE: Combine defaults with loaded config
-        acl_config = {**default_test_params, **main_config['ACL']}
-        # END CHANGE
-        
-        acl_config.update({
-            'run_id': "test_suite_transfer_acl",
-            'total_stages': 1,
-            'student_steps_per_stage': 256,
-            'n_envs': 2,
-            'pretrained_model_path': ppo_model_path, 
-        })
-        if 'ppo_config' in acl_config and 'learning_starts' in acl_config['ppo_config']:
-            acl_config['ppo_config']['learning_starts'] = 100
-
-        acl_args = SimpleNamespace(**acl_config)
-        acl_model_path, success = run_test(train_acl.main, acl_args, "ACL Transfer Stage")
-        if not success:
-            failed_tests.append("ACL Transfer")
-
-    # --- Step 3: MARL Cooperation (Micro-run with Transfer) ---
-    if 'MARL' in main_config and acl_model_path and not failed_tests:
-        # START CHANGE: Combine defaults with loaded config
-        marl_config = {**default_test_params, **main_config['MARL']}
-        # END CHANGE
-        
-        marl_config.update({
-            'run_id': "test_suite_transfer_marl",
-            'iterations': 1,
-            'num_workers': 1,
-            'num_gpus': 0,
-            'use_tune': False,
-            'shared_policy': True,
-            'pretrained_model_path': acl_model_path,
-        })
-        marl_args = SimpleNamespace(**marl_config)
-        _, success = run_test(train_marl.main, marl_args, "MARL Transfer Stage")
-        if not success:
-            failed_tests.append("MARL Transfer")
-
-    # --- Final Summary ---
+    if ppo_model_path and not failed_tests:
+        acl_args = SimpleNamespace(
+            env='parkour', body='classic_bipedal', run_id="test_suite_acl",
+            total_stages=1, student_steps_per_stage=256, n_envs=2,
+            pretrained_model_path=ppo_model_path, mastery_threshold=1000,
+            eval_episodes=1, horizon=128, seed=42,
+            difficulty_dims=['water_level'], initial_difficulty=[0.1], mastery_order=['water_level'],
+            difficulty_increments={'water_level': 0.1},
+            render=False
+        )
+        _, success = run_test(train_acl.main, "ACL Micro-Training (with Transfer)", args_namespace=acl_args)
+        if not success: failed_tests.append("ACL Micro-Training")
+    
     print_header("TEST SUITE SUMMARY")
     if not failed_tests:
-        print("🎉🎉🎉 Full Transfer Learning Pipeline test passed successfully! 🎉🎉🎉")
+        print("🎉🎉🎉 All tests passed successfully! 🎉🎉🎉")
     else:
         print("🔥🔥🔥 ERRORS DETECTED DURING TESTING. 🔥🔥🔥")
         print(f"Failed stages: {', '.join(failed_tests)}")
         sys.exit(1)
 
-if __name__ == '__main__':
-    parser = argparse.ArgumentParser(description="Run the project's integrated test suite.")
-    main(None)
-
 ===== .\scripts\train_acl.py =====
-# scripts/train_acl.py
 import os
 import sys
 import time
@@ -1235,180 +1327,221 @@ import TeachMyAgent.environments
 from utils.env_utils import build_and_setup_env
 from utils.shared_args import add_common_args, add_environment_args, add_render_args
 
-# ... (Các hằng số và hàm parse giữ nguyên) ...
-PARAM_SPACE_LIMS = np.array([[-1.0, 1.0],[-1.0, 1.0],[-1.0, 1.0],[0.0, 0.8],])
-EASY_PARAMS = np.array([0.0, 0.0, 0.0, 0.0])
-def get_linear_schedule(initial_value: float) -> Callable[[float], float]:
-    def func(progress_remaining: float) -> float: return progress_remaining * initial_value
-    return func
-def parse_schedule(config_value: Union[dict, float, str]):
-    if isinstance(config_value, dict):
-        schedule_type = config_value.get("type")
-        if schedule_type == "linear": return get_linear_schedule(float(config_value["initial_value"]))
-        else: raise ValueError(f"Unknown schedule type: {schedule_type}")
-    return float(config_value)
+# --- START: New constants and helpers for multi-dimensional ACL ---
+# Defines the name and valid range [min, max] for each curriculum parameter
+PARAM_SPACE_MAP = {
+    "input_vector_0": [-1.0, 1.0],
+    "input_vector_1": [-1.0, 1.0],
+    "input_vector_2": [-1.0, 1.0],
+    "water_level": [0.0, 0.8],
+    "creepers_height": [0.0, 10.0],
+    "creepers_spacing": [2.0, 0.05] # Note: Spacing decreases to make it harder
+}
+# --- END: New constants ---
 
 def add_acl_args(parser: argparse.ArgumentParser) -> argparse.ArgumentParser:
     parser = add_common_args(parser); parser = add_environment_args(parser); parser = add_render_args(parser)
     group = parser.add_argument_group("ACL Training Parameters")
     group.add_argument("--run_id", type=str, default="acl_run1")
-    group.add_argument("--total_stages", type=int, default=500)
+    group.add_argument("--total_stages", type=int, default=50)
     group.add_argument("--student_steps_per_stage", type=int, default=2048 * 8)
     group.add_argument("--eval_episodes", type=int, default=10)
     group.add_argument("--mastery_threshold", type=float, default=150.0)
-    group.add_argument("--difficulty_increment", type=float, default=0.01)
     group.add_argument("--render", action='store_true')
     group.add_argument("--n_envs", type=int, default=8)
     parser.add_argument('--horizon', type=int, default=3000)
     group.add_argument("--pretrained_model_path", type=str, default=None, help="Path to a pre-trained model to start ACL from.")
     return parser
 
-# ... (hàm sample_task_params và evaluate_student giữ nguyên) ...
-def sample_task_params(difficulty_ratio: float) -> dict:
-    min_spacing = 0.05; max_spacing = 2.0; max_height = 10.0; min_height = 1.5
-    if difficulty_ratio < 0.5:
-        current_spacing = min_spacing + (difficulty_ratio * 2) * (max_spacing - min_spacing); current_height = max_height
-    else:
-        current_spacing = max_spacing; current_height = max_height - ((difficulty_ratio - 0.5) * 2) * (max_height - min_height)
-    low_bounds = EASY_PARAMS; high_bounds = np.array([lim[1] if p > 0 else lim[0] for p, lim in zip(EASY_PARAMS, PARAM_SPACE_LIMS)])
-    current_max = low_bounds + difficulty_ratio * (high_bounds - low_bounds)
-    sampled_terrain_params = np.random.uniform(low=low_bounds, high=current_max)
-    return {"input_vector": sampled_terrain_params[:3], "water_level": sampled_terrain_params[3], "creepers_spacing": current_spacing, "creepers_height": current_height, "creepers_width": 0.5}
+# --- START: Updated task sampling for multi-dimensional curriculum ---
+def sample_task_params(difficulty_vector: np.ndarray, dim_names: list) -> dict:
+    """Samples environment parameters based on a multi-dimensional difficulty vector."""
+    params = {}
+    current_params = {}
+    
+    for i, dim_name in enumerate(dim_names):
+        min_val, max_val = PARAM_SPACE_MAP[dim_name]
+        
+        # Interpolate the current max value for this dimension based on difficulty
+        current_max = min_val + difficulty_vector[i] * (max_val - min_val)
+        
+        # Sample uniformly between the easiest value and the current max
+        # For inverted params like spacing, min_val is harder, so we sample accordingly
+        if min_val > max_val: # Inverted case (e.g., creepers_spacing)
+            sampled_val = np.random.uniform(low=current_max, high=min_val)
+        else: # Normal case
+            sampled_val = np.random.uniform(low=min_val, high=current_max)
+        
+        current_params[dim_name] = sampled_val
 
-def evaluate_student(student_model: BaseAlgorithm, env_id: str, body_type: str, difficulty_ratio: float, num_episodes: int, args: argparse.Namespace, render_mode: str = None, stats_path: str = None) -> float:
-    total_rewards = 0.0; vec_eval_env = None
+    # Map the sampled values back to the environment's expected arguments
+    input_vec = [
+        current_params.get("input_vector_0", 0.0),
+        current_params.get("input_vector_1", 0.0),
+        current_params.get("input_vector_2", 0.0)
+    ]
+    params["input_vector"] = np.array(input_vec)
+    if "water_level" in current_params: params["water_level"] = current_params["water_level"]
+    if "creepers_height" in current_params: params["creepers_height"] = current_params["creepers_height"]
+    if "creepers_spacing" in current_params: params["creepers_spacing"] = current_params["creepers_spacing"]
+    
+    # Creepers need width if they have height
+    if params.get("creepers_height", 0.0) > 0:
+        params["creepers_width"] = 0.5
+    else:
+        params["creepers_width"] = None
+
+    return params
+# --- END: Updated task sampling ---
+
+def evaluate_student(student_model: BaseAlgorithm, env_id: str, body_type: str, 
+                     difficulty_vector: np.ndarray, dim_names: list, 
+                     num_episodes: int, args: argparse.Namespace, render_mode: str = None, stats_path: str = None) -> float:
+    total_rewards = 0.0
     try:
-        def make_eval_env(): return build_and_setup_env(env_id, body_type, sample_task_params(difficulty_ratio), render_mode=render_mode, args=args)
+        def make_eval_env(): 
+            task_params = sample_task_params(difficulty_vector, dim_names)
+            return build_and_setup_env(env_id, body_type, task_params, render_mode=render_mode, args=args)
+        
         vec_eval_env = make_vec_env(make_eval_env, n_envs=1)
         if stats_path and os.path.exists(stats_path):
-            vec_eval_env = VecNormalize.load(stats_path, vec_eval_env); vec_eval_env.training = False; vec_eval_env.norm_reward = False
-        for i in range(num_episodes):
-            obs = vec_eval_env.reset(); done = False; episode_reward = 0.0
+            vec_eval_env = VecNormalize.load(stats_path, vec_eval_env)
+            vec_eval_env.training = False
+            vec_eval_env.norm_reward = False
+
+        for _ in range(num_episodes):
+            obs = vec_eval_env.reset()
+            done = False
             while not done:
-                if render_mode == "human": vec_eval_env.render()
                 action, _ = student_model.predict(obs, deterministic=True)
-                obs, reward, done_vec, info = vec_eval_env.step(action); done = done_vec[0]
-                if done: episode_reward = info[0].get('episode', {}).get('r', 0)
-            total_rewards += episode_reward
+                obs, _, done_vec, info = vec_eval_env.step(action)
+                done = done_vec[0]
+                if done:
+                    total_rewards += info[0].get('episode', {}).get('r', 0)
     finally:
-        if vec_eval_env: vec_eval_env.close()
+        if 'vec_eval_env' in locals() and vec_eval_env: vec_eval_env.close()
     return total_rewards / num_episodes
+
 
 def main(args: argparse.Namespace) -> str:
     if args.env != "parkour":
         print(f"ERROR: ACL training currently supports only 'parkour', got '{args.env}'."); sys.exit(1)
 
-    output_base = f"output/acl/{args.run_id}"; model_dir = os.path.join(output_base, "models")
-    log_dir = os.path.join(output_base, "logs"); stats_path = os.path.join(output_base, "vecnormalize.pkl")
-    os.makedirs(model_dir, exist_ok=True); os.makedirs(log_dir, exist_ok=True)
+    output_base = f"output/acl/{args.run_id}"
+    os.makedirs(output_base, exist_ok=True)
     
-    print(f"\n{'=' * 60}\nStarting ACL training for env '{args.env}' with body '{args.body}'\nUsing STUDENT ALGORITHM: SAC\nOutput directory: {output_base}\n{'=' * 60}")
+    print(f"\n{'=' * 60}\nStarting Multi-Dimensional ACL training for '{args.env}'\n{'=' * 60}")
 
-    render_mode = "human" if args.render else None
-    AGENT_CLASS = SAC
+    # --- ACL Configuration ---
+    dim_names = getattr(args, 'difficulty_dims', [])
+    initial_difficulty = np.array(getattr(args, 'initial_difficulty', [0.0]*len(dim_names)))
+    mastery_order = getattr(args, 'mastery_order', dim_names)
+    increments = getattr(args, 'difficulty_increments', {name: 0.1 for name in dim_names})
     
-    agent_kwargs = getattr(args, 'ppo_config', {})
-    if 'learning_rate_schedule' in agent_kwargs: agent_kwargs['learning_rate'] = parse_schedule(agent_kwargs.pop('learning_rate_schedule'))
-    if 'clip_range_schedule' in agent_kwargs: agent_kwargs.pop('clip_range_schedule')
-    print("Using SAC hyperparameters for student:", agent_kwargs)
-    
-    difficulty_ratio = 0.0; student = None; final_path = os.path.join(model_dir, "student_final.zip")
+    difficulty_vector = initial_difficulty
+    current_focus_dim_idx = 0
+
+    student, final_path = None, os.path.join(output_base, "student_final.zip")
 
     try:
         for stage in range(1, args.total_stages + 1):
-            start_time = time.time()
-            replay_config = getattr(args, 'curriculum_replay', {}); replay_enabled = replay_config.get('enabled', False); replay_ratio = replay_config.get('replay_ratio', 0.2)
-            if replay_enabled: print(f"Curriculum Replay is ENABLED. Replay Ratio: {replay_ratio*100}%")
+            print(f"\n--- Stage {stage}/{args.total_stages} | Focus: '{mastery_order[current_focus_dim_idx]}' ---")
+            print(f"Current Difficulty Vector: {np.round(difficulty_vector, 3)}")
 
             def make_env_with_replay():
-                if replay_enabled and np.random.rand() < replay_ratio and difficulty_ratio > 0:
-                    task_params = sample_task_params(np.random.uniform(0, difficulty_ratio))
-                else:
-                    task_params = sample_task_params(difficulty_ratio)
+                # For replay, sample from a curriculum "box" up to the current difficulty
+                replay_difficulty = np.random.rand(len(dim_names)) * difficulty_vector
+                task_params = sample_task_params(replay_difficulty, dim_names)
                 return build_and_setup_env(args.env, args.body, task_params, args=args, **getattr(args, 'reward_shaping', {}))
+
+            student, _ = train_student_stage(args, stage, student, make_env_with_replay, output_base)
             
-            print(f"\n--- Stage {stage}/{args.total_stages} | Difficulty: {difficulty_ratio:.3f} ---")
-
-            if student:
-                temp_model_path = os.path.join(model_dir, "student_temp.zip"); student.save(temp_model_path)
-                student.get_env().save(stats_path); student.get_env().close(); del student
-            else:
-                temp_model_path = None
-
-            n_envs = 1 if args.render else args.n_envs
-            vec_env = make_vec_env(make_env_with_replay, n_envs=n_envs, seed=getattr(args, 'seed', None))
+            avg_reward = evaluate_student(
+                student, args.env, args.body, difficulty_vector, dim_names, 
+                args.eval_episodes, args, render_mode="human" if args.render else None,
+                stats_path=os.path.join(output_base, "vecnormalize.pkl"))
             
-            if os.path.exists(stats_path):
-                print(f"Loading VecNormalize stats from: {stats_path}"); vec_env = VecNormalize.load(stats_path, vec_env)
-            else:
-                print("Creating new VecNormalize stats."); vec_env = VecNormalize(vec_env, norm_obs=True, norm_reward=True, clip_obs=10.)
+            print(f"Evaluation Avg Reward = {avg_reward:.2f}")
 
-            pretrained_path = getattr(args, 'pretrained_model_path', None)
-            if stage == 1 and pretrained_path and os.path.exists(pretrained_path):
-                print(f"Loading PRE-TRAINED model for first stage from: {pretrained_path}")
-                student = AGENT_CLASS("MlpPolicy", vec_env, verbose=0, tensorboard_log=os.path.join(log_dir, "student"), device="auto", **agent_kwargs)
-                ppo_model = PPO.load(pretrained_path, device="cpu")
-                print("Transferring PPO policy weights to new SAC student...")
-                
-                # START CHANGE: New robust weight transfer
-                # The PPO 'policy_net' is equivalent to the SAC's actor/critic 'net'
-                ppo_shared_net_weights = ppo_model.policy.mlp_extractor.policy_net.state_dict()
-                
-                # SAC's MlpPolicy has an `actor` and `critic` which are the networks we need to update
-                student.actor.load_state_dict(ppo_shared_net_weights, strict=False)
-                student.critic.load_state_dict(ppo_shared_net_weights, strict=False)
-                # END CHANGE
-
-                print("Weight transfer complete.")
-
-            elif temp_model_path and os.path.exists(temp_model_path):
-                print(f"Loading model weights from previous stage: {temp_model_path}")
-                student = AGENT_CLASS.load(temp_model_path, env=vec_env, tensorboard_log=os.path.join(log_dir, "student"), device="auto")
-            else:
-                print("Initializing new SAC model from scratch.")
-                student = AGENT_CLASS("MlpPolicy", vec_env, verbose=0, tensorboard_log=os.path.join(log_dir, "student"), device="auto", **agent_kwargs)
-
-            student.learn(total_timesteps=args.student_steps_per_stage, reset_num_timesteps=False, progress_bar=True)
-            student.get_env().save(stats_path)
-            
-            print(f"Evaluating agent over {args.eval_episodes} episodes..."); eval_model_path = os.path.join(model_dir, "student_eval_temp.zip")
-            student.save(eval_model_path); eval_model = AGENT_CLASS.load(eval_model_path, device="auto")
-            avg_reward = evaluate_student(eval_model, args.env, args.body, difficulty_ratio, args.eval_episodes, args, render_mode=render_mode, stats_path=stats_path)
-            del eval_model
-            
-            print(f"Average reward = {avg_reward:.2f}")
             if avg_reward > args.mastery_threshold:
-                new_diff = min(1.0, difficulty_ratio + args.difficulty_increment)
-                if new_diff > difficulty_ratio:
-                    difficulty_ratio = new_diff; print(f"Mastery achieved! Increasing difficulty to {difficulty_ratio:.3f}")
+                print(f"Mastery achieved for focus '{mastery_order[current_focus_dim_idx]}'!")
+                
+                # Increase difficulty of the current focused dimension
+                focused_dim_name = mastery_order[current_focus_dim_idx]
+                dim_idx_in_vec = dim_names.index(focused_dim_name)
+                increment = increments[focused_dim_name]
+                difficulty_vector[dim_idx_in_vec] = min(1.0, difficulty_vector[dim_idx_in_vec] + increment)
+                
+                # If this dimension is maxed out, move to the next one
+                if difficulty_vector[dim_idx_in_vec] >= 1.0:
+                    print(f"Dimension '{focused_dim_name}' maxed out.")
+                    if current_focus_dim_idx < len(mastery_order) - 1:
+                        current_focus_dim_idx += 1
+                        print(f"Switching focus to '{mastery_order[current_focus_dim_idx]}'.")
+                    else:
+                        print("All curriculum dimensions mastered!")
             else:
                 print(f"Below threshold ({args.mastery_threshold:.2f}). Keeping difficulty unchanged.")
-
-            if stage % 25 == 0 or stage == args.total_stages:
-                model_path = os.path.join(model_dir, f"student_{args.run_id}_stage_{stage}.zip")
-                student.save(model_path); print(f"Model saved: {model_path}")
-
-            print(f"Stage time: {time.time() - start_time:.2f}s")
 
     except KeyboardInterrupt:
         print("\nTraining interrupted by user.")
     finally:
-        if student and hasattr(student, 'env') and student.get_env():
-            student.get_env().save(stats_path); print(f"Final VecNormalize stats saved to: {stats_path}")
-            student.save(final_path); student.get_env().close()
+        if student:
+            stats_path = os.path.join(output_base, "vecnormalize.pkl")
+            student.get_env().save(stats_path)
+            student.save(final_path)
+            student.get_env().close()
 
-    print(f"\n{'=' * 60}\nACL training complete."); print(f"Final Student model saved at: {final_path}")
+    print(f"\nACL training complete. Final model saved at: {final_path}")
     return final_path
+
+def train_student_stage(args, stage, student_model, env_fn, output_base):
+    model_dir = os.path.join(output_base, "models"); os.makedirs(model_dir, exist_ok=True)
+    log_dir = os.path.join(output_base, "logs"); os.makedirs(log_dir, exist_ok=True)
+    stats_path = os.path.join(output_base, "vecnormalize.pkl")
+    
+    if student_model:
+        student_model.get_env().save(stats_path)
+        student_model.get_env().close()
+
+    n_envs = 1 if args.render else args.n_envs
+    vec_env = make_vec_env(env_fn, n_envs=n_envs, seed=getattr(args, 'seed', None))
+    vec_env = VecNormalize.load(stats_path, vec_env) if os.path.exists(stats_path) else VecNormalize(vec_env)
+
+    agent_kwargs = getattr(args, 'ppo_config', {}) # Note: it's SAC config
+    AGENT_CLASS = SAC
+
+    if stage == 1 and args.pretrained_model_path:
+        print(f"Loading PRE-TRAINED PPO model for first stage from: {args.pretrained_model_path}")
+        student = AGENT_CLASS("MlpPolicy", vec_env, verbose=0, tensorboard_log=log_dir, device="auto", **agent_kwargs)
+        ppo_model = PPO.load(args.pretrained_model_path, device="cpu")
+        print("Transferring PPO policy weights to new SAC student...")
+        ppo_shared_net_weights = ppo_model.policy.mlp_extractor.policy_net.state_dict()
+        student.actor.load_state_dict(ppo_shared_net_weights, strict=False)
+        student.critic.load_state_dict(ppo_shared_net_weights, strict=False)
+        print("Weight transfer complete.")
+    elif student_model:
+        student = AGENT_CLASS.load(student_model.save_path, env=vec_env, tensorboard_log=log_dir, device="auto")
+    else:
+        student = AGENT_CLASS("MlpPolicy", vec_env, verbose=0, tensorboard_log=log_dir, device="auto", **agent_kwargs)
+        
+    student.learn(total_timesteps=args.student_steps_per_stage, reset_num_timesteps=False, progress_bar=True)
+    
+    if stage % 10 == 0 or stage == args.total_stages:
+        save_path = os.path.join(model_dir, f"student_stage_{stage}.zip")
+        student.save(save_path)
+        print(f"Model checkpoint saved: {save_path}")
+
+    return student, stats_path
 
 ===== .\scripts\train_marl.py =====
 # scripts/train_marl.py
 import argparse
 import os
 import sys
-import time
-import ray
 from collections.abc import Mapping
 from typing import Optional
+import ray
 from ray import tune, air
 from ray.rllib.algorithms.ppo import PPOConfig
 from ray.rllib.policy.policy import PolicySpec
@@ -1416,86 +1549,18 @@ from ray.tune.registry import register_env
 from gymnasium.wrappers import TransformObservation
 import numpy as np
 import gymnasium as gym
-import TeachMyAgent.environments
-import torch
-from stable_baselines3 import PPO, SAC 
-
-from ray.rllib.utils.metrics import (
-    ENV_RUNNER_RESULTS,
-    EPISODE_RETURN_MEAN,
-    LEARNER_RESULTS,
-    ALL_MODULES,
-)
 
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import TeachMyAgent.environments
 from TeachMyAgent.environments.envs.multi_agent_parametric_parkour import MultiAgentParkour
 from TeachMyAgent.environments.envs.interactive_multi_agent_parkour import InteractiveMultiAgentParkour
-from TeachMyAgent.environments.envs.parametric_continuous_parkour import ParametricContinuousParkour
 
-def load_sb3_weights_into_rllib_module(rllib_module, sb3_model_path, temp_env):
-    """
-    Loads weights from a saved SB3 model (PPO or SAC) into an RLlib RLModule.
-    This function performs a best-effort transfer assuming similar MLP architectures.
-    """
-    print(f"Attempting to transfer weights from SB3 model: {sb3_model_path}")
-    try:
-        # Provide a temporary environment to `load` to prevent internal conflicts
-        # Heuristic to detect model type from file name for robustness
-        model_name_upper = sb3_model_path.upper().replace('\\', '/')
-        if "SAC" in os.path.basename(model_name_upper):
-            sb3_model = SAC.load(sb3_model_path, device='cpu', env=temp_env)
-            sb3_policy_state_dict = sb3_model.policy.state_dict()
-            print("Loaded SB3 SAC model for weight transfer.")
-        else:
-            sb3_model = PPO.load(sb3_model_path, device='cpu', env=temp_env)
-            sb3_policy_state_dict = sb3_model.policy.state_dict()
-            print("Loaded SB3 PPO model for weight transfer.")
-            
-    except Exception as e:
-        print(f"ERROR: Could not load SB3 model. Aborting weight transfer. Error: {e}")
-        return
-
-    rllib_module_state_dict = rllib_module.state_dict()
-
-    key_mapping = {}
-    if isinstance(sb3_model, SAC):
-        # Mapping from SAC MlpPolicy to RLlib PPO RLModule
-        key_mapping = {
-            "actor.features_extractor.0.weight": "pi_encoder._nets.0.weight", "actor.features_extractor.0.bias": "pi_encoder._nets.0.bias",
-            "actor.features_extractor.2.weight": "pi_encoder._nets.1.weight", "actor.features_extractor.2.bias": "pi_encoder._nets.1.bias",
-            "critic.features_extractor.0.weight": "vf_encoder._nets.0.weight", "critic.features_extractor.0.bias": "vf_encoder._nets.0.bias",
-            "critic.features_extractor.2.weight": "vf_encoder._nets.1.weight", "critic.features_extractor.2.bias": "vf_encoder._nets.1.bias",
-            "actor.mu.weight": "_action_dist_layer.weight", "actor.mu.bias": "_action_dist_layer.bias",
-            "critic.qf0.2.weight": "_value_layer.weight", "critic.qf0.2.bias": "_value_layer.bias",
-        }
-    elif isinstance(sb3_model, PPO):
-        # Mapping from PPO MlpPolicy to RLlib PPO RLModule
-        key_mapping = {
-            "mlp_extractor.policy_net.0.weight": "pi_encoder._nets.0.weight", "mlp_extractor.policy_net.0.bias": "pi_encoder._nets.0.bias",
-            "mlp_extractor.policy_net.2.weight": "pi_encoder._nets.1.weight", "mlp_extractor.policy_net.2.bias": "pi_encoder._nets.1.bias",
-            "mlp_extractor.value_net.0.weight": "vf_encoder._nets.0.weight", "mlp_extractor.value_net.0.bias": "vf_encoder._nets.0.bias",
-            "mlp_extractor.value_net.2.weight": "vf_encoder._nets.1.weight", "mlp_extractor.value_net.2.bias": "vf_encoder._nets.1.bias",
-            "action_net.weight": "_action_dist_layer.weight", "action_net.bias": "_action_dist_layer.bias",
-            "value_net.weight": "_value_layer.weight", "value_net.bias": "_value_layer.bias",
-        }
-    
-    new_rllib_state_dict = rllib_module_state_dict.copy()
-    weights_transferred = 0
-    for sb3_key, rllib_key in key_mapping.items():
-        if sb3_key in sb3_policy_state_dict and rllib_key in new_rllib_state_dict:
-            if sb3_policy_state_dict[sb3_key].shape == new_rllib_state_dict[rllib_key].shape:
-                new_rllib_state_dict[rllib_key] = sb3_policy_state_dict[sb3_key]
-                weights_transferred += 1
-            else:
-                print(f"  - Shape mismatch for key '{rllib_key}'. SB3 shape: {sb3_policy_state_dict[sb3_key].shape}, RLlib shape: {new_rllib_state_dict[rllib_key].shape}. Skipping.")
-
-    if weights_transferred > 0:
-        rllib_module.load_state_dict(new_rllib_state_dict)
-        print(f"Successfully transferred {weights_transferred} weight tensors from SB3 to RLlib module.")
-    else:
-        print("WARNING: No weights were transferred. Check network architectures in YAML and key mappings in train_marl.py.")
+# START FIX: Add the missing print_header function
+def print_header(title: str):
+    width = 80
+    print("\n\n" + "#"*width + f"\n##{title:^76}##\n" + "#"*width)
+# END FIX
 
 def add_marl_args(parser: argparse.ArgumentParser) -> argparse.ArgumentParser:
     parser.add_argument("--mode", type=str, default="interactive", choices=["cooperative", "interactive"], help="Environment mode.")
@@ -1504,17 +1569,12 @@ def add_marl_args(parser: argparse.ArgumentParser) -> argparse.ArgumentParser:
     parser.add_argument("--iterations", type=int, default=100, help="Number of training iterations.")
     parser.add_argument("--num-workers", type=int, default=2, help="Number of Ray rollout workers.")
     parser.add_argument("--num-gpus", type=float, default=0, help="Number of GPUs to use for training.")
-    parser.add_argument("--check-env", action="store_true", help="Run a random environment check.")
-    parser.add_argument("--width", type=int, help="Render window width.")
-    parser.add_argument("--height", type=int, help="Render window height.")
-    parser.add_argument("--fullscreen", action="store_true", help="Render in fullscreen.")
     parser.add_argument("--run_id", type=str, default="marl_run1", help="Identifier for the training run.")
     parser.add_argument("--use-tune", action="store_true", help="Use Ray Tune for hyperparameter tuning.")
     parser.add_argument('--horizon', type=int, default=3000, help="Max steps per episode.")
     parser.add_argument("--reward-type", type=str, default="individual", choices=["individual", "shared"], help="MARL reward structure.")
     parser.add_argument("--shared-policy", action="store_true", help="Use a single shared policy for all agents.")
     parser.add_argument("--use-cc", action="store_true", help="Use a Centralized Critic.")
-    parser.add_argument("--pretrained_model_path", type=str, default=None, help="Path to a pre-trained SB3 model to start MARL from.")
     return parser
 
 def deep_update(original, new_dict):
@@ -1567,20 +1627,15 @@ def get_env_creator(mode):
         return TransformObservation(base_env, clip_multi_agent_obs, clipped_observation_space)
     return wrapped_env_creator
 
+
 def main(args: argparse.Namespace) -> Optional[str]:
-    if hasattr(args, 'check_env') and args.check_env: return
-
-    if not hasattr(args, 'horizon'): args.horizon = 3000
-
     env_name = f"marl-{args.mode}-v0"
     register_env(env_name, get_env_creator(args.mode))
     env_config = {"n_agents": args.n_agents, "agent_body_type": args.body, "horizon": args.horizon, "reward_type": args.reward_type}
     
-    # Create a temporary SINGLE-AGENT environment for loading SB3 models
-    temp_env_for_loading = ParametricContinuousParkour(agent_body_type=args.body)
-    # Use the observation/action space from the actual multi-agent env for the config
-    with get_env_creator(args.mode)(env_config) as temp_marl_env:
-        obs_space, act_space = temp_marl_env.observation_space["agent_0"], temp_marl_env.action_space["agent_0"]
+    temp_env = get_env_creator(args.mode)(env_config)
+    obs_space, act_space = temp_env.observation_space["agent_0"], temp_env.action_space["agent_0"]
+    temp_env.close()
 
     ppo_config_dict = getattr(args, 'ppo_config', {}); training_config = ppo_config_dict.get('training', {})
     model_config = ppo_config_dict.get('model', {}); env_runners_config = ppo_config_dict.get('env_runners', {})
@@ -1590,66 +1645,89 @@ def main(args: argparse.Namespace) -> Optional[str]:
         .rl_module(model_config=model_config).resources(num_gpus=args.num_gpus))
 
     if hasattr(args, 'shared_policy') and args.shared_policy:
-        print("Using Parameter Sharing.")
         config.multi_agent(policies={"shared_policy": PolicySpec(observation_space=obs_space, action_space=act_space)},
                            policy_mapping_fn=lambda agent_id, *a, **kw: "shared_policy")
     else:
-        print("Using Independent Learning.")
         config.multi_agent(policies={f"agent_{i}": PolicySpec(observation_space=obs_space, action_space=act_space) for i in range(args.n_agents)},
                            policy_mapping_fn=lambda agent_id, *a, **kw: agent_id)
 
     if hasattr(args, 'use_cc') and args.use_cc:
-        print("Activating Centralized Critic.")
         config.update_from_dict({"use_centralized_value_function": True})
 
     use_tune = getattr(args, 'use_tune', False)
+    output_dir = os.path.abspath(os.path.join("output", "marl", args.run_id))
 
     if use_tune:
-        pass # Tune logic (unchanged)
+        print_header("STARTING RAY TUNE HYPERPARAMETER SEARCH")
+        tune_config = getattr(args, 'tune_config', {})
+        search_space = _parse_search_space(tune_config.get('search_space', {}))
+        
+        # Merge search space into the main config
+        config_dict = config.to_dict()
+        final_search_space = deep_update(config_dict, search_space)
+
+        # Configure stopper
+        stopper_config = tune_config.get('stopper', {})
+        stopper = ray.tune.stopper.ExperimentPlateauStopper(
+            metric=stopper_config.get("metric", "episode_reward_mean"),
+            std=stopper_config.get("std", 0.01),
+            patience=stopper_config.get("patience", 10),
+            top=stopper_config.get("top", 10),
+            mode=stopper_config.get("mode", "max")
+        )
+
+        run_config = air.RunConfig(
+            name=args.run_id,
+            stop=stopper,
+            local_dir=os.path.dirname(output_dir),
+            checkpoint_config=air.CheckpointConfig(
+                num_to_keep=3,
+                checkpoint_score_attribute="episode_reward_mean",
+                checkpoint_score_order="max"
+            ),
+        )
+
+        tuner = tune.Tuner(
+            "PPO",
+            param_space=final_search_space,
+            run_config=run_config,
+            tune_config=tune.TuneConfig(
+                num_samples=tune_config.get("num_samples", 10),
+                metric="episode_reward_mean",
+                mode="max",
+            ),
+        )
+        
+        results = tuner.fit()
+        best_result = results.get_best_result()
+        best_checkpoint_path = best_result.checkpoint.path
+        print(f"\nTune complete. Best checkpoint saved at: {best_checkpoint_path}")
+        print(f"Best hyperparameters found: {best_result.config}")
+        return best_checkpoint_path
+
     else:
-        print(f"Starting a single MARL training run for {args.iterations} iterations...")
+        print_header(f"STARTING SINGLE MARL RUN ({args.iterations} ITERATIONS)")
         algo = config.build()
         
-        pretrained_path = getattr(args, 'pretrained_model_path', None)
-        if pretrained_path and os.path.exists(pretrained_path):
-            if hasattr(args, 'shared_policy') and args.shared_policy:
-                print("\n" + "="*80)
-                print("TRANSFER LEARNING: Loading weights from SB3 model into shared policy...")
-                module_to_load = algo.get_module("shared_policy")
-                load_sb3_weights_into_rllib_module(module_to_load, pretrained_path, temp_env_for_loading)
-                
-                print("Syncing transferred weights to all rollout workers...")
-                algo.env_runner_group.sync_weights()
-                
-                print("Weight sync complete.")
-                print("="*80 + "\n")
-            else:
-                print("WARNING: Pre-trained model provided, but 'shared_policy' is not enabled. Cannot transfer weights.")
-        
-        output_dir = os.path.abspath(os.path.join("output", "marl", args.run_id)); os.makedirs(output_dir, exist_ok=True)
+        os.makedirs(output_dir, exist_ok=True)
         print(f"Checkpoints will be saved to: {output_dir}")
-        print(f"TensorBoard logs will be saved under: {algo.logdir}")
+        print(f"TensorBoard logs: {algo.logdir}")
 
-        best_reward, checkpoint_path_to_return = -float('inf'), None
+        best_reward, best_checkpoint_path = -float('inf'), None
         for i in range(args.iterations):
             result = algo.train()
-            env_runner_results, learner_results = result.get(ENV_RUNNER_RESULTS, {}), result.get(LEARNER_RESULTS, {})
-            episode_reward_mean = env_runner_results.get(EPISODE_RETURN_MEAN, float("nan"))
+            reward_mean = result.get("episode_reward_mean", float('nan'))
             
-            if episode_reward_mean > best_reward:
-                best_reward = episode_reward_mean
+            if reward_mean > best_reward:
+                best_reward = reward_mean
                 checkpoint_result = algo.save(checkpoint_dir=output_dir)
-                checkpoint_path_to_return = checkpoint_result.checkpoint.path
-                print(f"\nNew best average reward: {best_reward:.2f}. Checkpoint saved at: {checkpoint_path_to_return}")
+                best_checkpoint_path = checkpoint_result.checkpoint.path
+                print(f"\nNew best avg reward: {best_reward:.2f}. Checkpoint: {best_checkpoint_path}")
             
-            per_policy_rewards = env_runner_results.get("module_episode_returns_mean", {})
-            total_loss_per_module = {mid: stats.get("total_loss", float("nan")) for mid, stats in learner_results.items() if mid != ALL_MODULES}
-            
-            print(f"Iter {i + 1}/{args.iterations}: Mean Reward: {episode_reward_mean:.2f}, Policy Rewards: {per_policy_rewards}, Module Loss: {total_loss_per_module}")
+            print(f"Iter {i+1}/{args.iterations}: Mean Reward: {reward_mean:.2f}")
         
-        print(f"\nTraining complete. Best checkpoint saved at: {checkpoint_path_to_return}")
-        temp_env_for_loading.close() 
-        return checkpoint_path_to_return
+        print(f"\nTraining complete. Best checkpoint at: {best_checkpoint_path}")
+        return best_checkpoint_path
 
 ===== .\scripts\train_ppo.py =====
 # scripts/train_ppo.py
@@ -1771,7 +1849,6 @@ def main(args: argparse.Namespace) -> str:
     return final_model_path
 
 ===== .\scripts\watch.py =====
-# scripts/watch.py
 import argparse
 import time
 import os
@@ -1853,7 +1930,7 @@ def _watch_sb3(args):
         print(f"Error loading model from '{args.model_path}': {e}")
         sys.exit(1)
 
-    # --- Start: User-friendly Error Check ---
+    # --- START FIX: User-friendly Error Check for observation space mismatch ---
     env_obs_space = venv_unnormalized.observation_space
     model_obs_space = temp_model.observation_space
 
@@ -1868,7 +1945,7 @@ def _watch_sb3(args):
         print("!"*80 + "\n")
         venv_unnormalized.close()
         sys.exit(1)
-    # --- End: User-friendly Error Check ---
+    # --- END FIX ---
 
     # If shapes match, proceed to load VecNormalize and the model properly
     print("Observation spaces match. Loading environment with normalization stats...")
@@ -1982,7 +2059,9 @@ def _watch_rllib(args):
                 module = algo.get_module(policy_id)
                 obs_tensor = torch.from_numpy(obs[agent_id]).unsqueeze(0)
                 with torch.no_grad():
+                    # Get action distribution from the model's forward pass
                     action_dist_inputs = module.forward_inference({"obs": obs_tensor})['action_dist_inputs']
+                # For deterministic action, take the mean of the distribution
                 mean, _ = torch.chunk(action_dist_inputs, 2, dim=-1)
                 actions[agent_id] = mean.squeeze(0).cpu().numpy()
 
@@ -2008,10 +2087,13 @@ def main(args: argparse.Namespace):
     if framework == 'auto':
         if os.path.isdir(args.model_path):
             framework = 'rllib'
+            print("Auto-detected framework: RLlib (directory path provided)")
         elif os.path.isfile(args.model_path) and args.model_path.lower().endswith('.zip'):
             framework = 'sb3'
+            print("Auto-detected framework: Stable-Baselines3 (.zip file provided)")
         else:
             print(f"ERROR: Could not autodetect framework from path '{args.model_path}'.")
+            print("Please specify --framework sb3 (for .zip files) or --framework rllib (for checkpoint directories).")
             sys.exit(1)
 
     try:
@@ -2060,8 +2142,6 @@ register(
 )
 
 ===== .\TeachMyAgent\environments\envs\interactive_multi_agent_parkour.py =====
-# TeachMyAgent/environments/envs/interactive_multi_agent_parkour.py
-
 import math
 import numpy as np
 import gymnasium as gym
@@ -2574,7 +2654,6 @@ class MultiAgentParkour(MultiAgentEnv):
 
 
 ===== .\TeachMyAgent\environments\envs\parametric_continuous_parkour.py =====
-# TeachMyAgent/environments/envs/parametric_continuous_parkour.py
 import math
 import os
 
@@ -2592,7 +2671,7 @@ from TeachMyAgent.environments.envs.bodies.BodiesEnum import BodiesEnum
 from TeachMyAgent.environments.envs.bodies.BodyTypesEnum import BodyTypesEnum
 from TeachMyAgent.environments.envs.utils.custom_user_data import CustomUserDataObjectTypes, CustomUserData
 
-# ... (ContactDetector and LidarCallback classes remain unchanged) ...
+# ... (ContactDetector and LidarCallback classes remain the same) ...
 class ContactDetector(WaterContactDetector, ClimbingContactDetector):
     def __init__(self, env):
         super(ContactDetector, self).__init__(); self.env = env
@@ -2628,7 +2707,6 @@ FPS=50; SCALE=30.0; VIEWPORT_W=600; VIEWPORT_H=400; NB_LIDAR=10; LIDAR_RANGE=160
 class ParametricContinuousParkour(gym.Env, EzPickle):
     metadata = {'render_modes': ['human', 'rgb_array'], 'render_fps': FPS}
 
-    # START CHANGE: Modify __init__ to filter kwargs
     def __init__(self, agent_body_type: str, CPPN_weights_path: str = None, input_CPPN_dim: int = 3,
                  terrain_cppn_scale: int = 10, ceiling_offset: int = 200, ceiling_clip_offset: int = 0,
                  lidars_type: str = 'full', water_clip: int = 20, movable_creepers: bool = False,
@@ -2642,13 +2720,12 @@ class ParametricContinuousParkour(gym.Env, EzPickle):
         self.ts = 0
         self.flip_termination_steps = flip_termination_steps
         
-        # Define the keys that are used for reward shaping
         reward_param_keys = [
             'progress_multiplier', 'velocity_multiplier', 'torque_penalty_multiplier', 
-            'alive_bonus', 'stagnation_penalty', 'grasp_bonus', 'hull_contact_penalty'
+            'alive_bonus', 'stagnation_penalty', 'grasp_bonus', 'hull_contact_penalty',
+            'body_angle_penalty', 'low_hull_penalty' # Added new reward keys
         ]
         
-        # Filter kwargs: Separate reward params from walker params
         walker_args = {}
         reward_shaping_args = {}
         for key, value in kwargs.items():
@@ -2657,7 +2734,6 @@ class ParametricContinuousParkour(gym.Env, EzPickle):
             else:
                 walker_args[key] = value
 
-        # Store reward shaping parameters with defaults
         self.reward_params = {
             'progress_multiplier': reward_shaping_args.get('progress_multiplier', 130.0),
             'velocity_multiplier': reward_shaping_args.get('velocity_multiplier', 0.3),
@@ -2665,9 +2741,10 @@ class ParametricContinuousParkour(gym.Env, EzPickle):
             'alive_bonus': reward_shaping_args.get('alive_bonus', 0.0),
             'stagnation_penalty': reward_shaping_args.get('stagnation_penalty', 0.1),
             'grasp_bonus': reward_shaping_args.get('grasp_bonus', 0.02),
-            'hull_contact_penalty': reward_shaping_args.get('hull_contact_penalty', HULL_CONTACT_PENALTY)
+            'hull_contact_penalty': reward_shaping_args.get('hull_contact_penalty', HULL_CONTACT_PENALTY),
+            'body_angle_penalty': reward_shaping_args.get('body_angle_penalty', 0.0),
+            'low_hull_penalty': reward_shaping_args.get('low_hull_penalty', 0.0)
         }
-        # END CHANGE
 
         self.np_random = None
         if lidars_type == "down": self.lidar_angle = 1.5; self.lidar_y_offset = 0
@@ -2679,25 +2756,21 @@ class ParametricContinuousParkour(gym.Env, EzPickle):
         self.contact_listener = ContactDetector(self)
         self.world = Box2D.b2World(contactListener=self.contact_listener)
         self.movable_creepers = movable_creepers
+        self.climbing_dynamics = ClimbingDynamics()
 
         body_type = BodiesEnum.get_body_type(agent_body_type)
         
-        # START CHANGE: Pass ONLY walker_args to the body constructor
         if body_type in [BodyTypesEnum.SWIMMER, BodyTypesEnum.AMPHIBIAN]:
-            self.agent_body = BodiesEnum[agent_body_type].value(SCALE, **walker_args)
-        elif body_type == BodyTypesEnum.WALKER:
-            # Add reset_on_hull_critical_contact specifically for walkers
-            self.agent_body = BodiesEnum[agent_body_type].value(SCALE, **walker_args, reset_on_hull_critical_contact=True)
-        else: # Climbers
-            self.agent_body = BodiesEnum[agent_body_type].value(SCALE, **walker_args)
-        # END CHANGE
+            self.agent_body = BodiesEnum[agent_body_type].value(scale=SCALE, **walker_args)
+        else:
+            self.agent_body = BodiesEnum[agent_body_type].value(scale=SCALE, reset_on_hull_critical_contact=True, **walker_args)
 
         self.terrain = []
         self.water_dynamics = WaterDynamics(self.world.gravity, max_push=water_clip)
-        self.climbing_dynamics = ClimbingDynamics()
         self.prev_shaping = None
         self.episodic_reward = 0
 
+        # ... (rest of __init__ is the same)
         self.TERRAIN_STARTPAD = max(INITIAL_TERRAIN_STARTPAD, self.agent_body.AGENT_WIDTH / TERRAIN_STEP + 5)
         self._create_terrain_fixtures()
 
@@ -2722,9 +2795,88 @@ class ParametricContinuousParkour(gym.Env, EzPickle):
             total_obs_size += len(self.agent_body.get_sensors_state())
         high = np.array([np.inf]*total_obs_size)
         self.observation_space = spaces.Box(-high, high, dtype=np.float32)
-    
-    # ... (phần còn lại của file giữ nguyên, bao gồm cả hàm step đã được sửa đổi) ...
-    # ... The rest of the file remains unchanged, including the previously modified step function ...
+
+
+    def step(self, action):
+        self.ts += 1; is_agent_dead = False
+        if hasattr(self.agent_body, "nb_steps_can_survive_outside_water") and self.nb_steps_outside_water > self.agent_body.nb_steps_can_survive_outside_water: is_agent_dead = True
+        if hasattr(self.agent_body, "nb_steps_can_survive_under_water") and self.nb_steps_under_water > self.agent_body.nb_steps_can_survive_under_water: is_agent_dead = True
+        if is_agent_dead: action = np.array([0] * self.action_space.shape[0])
+        
+        self.agent_body.activate_motors(action)
+        if self.agent_body.body_type == BodyTypesEnum.CLIMBER: self.climbing_dynamics.before_step_climbing_dynamics(action, self.agent_body, self.world)
+        self.world.Step(1.0 / FPS, 6 * 30, 2 * 30)
+        if self.agent_body.body_type == BodyTypesEnum.CLIMBER: self.climbing_dynamics.after_step_climbing_dynamics(self.world.contactListener, self.world)
+        self.water_dynamics.calculate_forces(self.world.contactListener.fixture_pairs)
+        
+        state = self._get_state()
+        pos = self.agent_body.reference_head_object.position
+        vel = self.agent_body.reference_head_object.linearVelocity
+        is_under_water = pos.y <= self.water_y
+        self.scroll = [pos[0] - self.rendering_viewer_w / SCALE / 5, pos[1] - self.rendering_viewer_h / SCALE / 2.5]
+        
+        # --- START: Advanced Reward Shaping & Logging ---
+        reward = 0
+        info = {}
+
+        # Progress and velocity rewards
+        shaping = self.reward_params['progress_multiplier'] * pos[0] / SCALE 
+        if self.prev_shaping is not None: reward += shaping - self.prev_shaping
+        self.prev_shaping = shaping
+        reward += self.reward_params['velocity_multiplier'] * vel.x
+        
+        # Penalties
+        reward -= self.reward_params['body_angle_penalty'] * abs(state[0]) # Penalty for not being upright
+        
+        if pos[1] < self.agent_body.AGENT_CENTER_HEIGHT * 0.7 and not is_under_water:
+            reward -= self.reward_params['low_hull_penalty'] # Penalty for "crawling"
+            
+        torque_penalty = sum(self.agent_body.TORQUE_PENALTY * self.reward_params['torque_penalty_multiplier'] * np.clip(np.abs(a), 0, 1) for a in action)
+        reward -= torque_penalty
+        
+        hull = self.agent_body.body_parts[0]
+        if hasattr(hull.userData, 'has_contact') and hull.userData.has_contact and self.agent_body.body_type == BodyTypesEnum.WALKER:
+            reward -= self.reward_params['hull_contact_penalty']
+
+        # Stagnation penalty
+        if abs(pos.x - self.last_progress_x) < 0.01: self.stagnation_counter += 1
+        else: self.stagnation_counter = 0; self.last_progress_x = pos.x
+        if self.stagnation_counter > 100: reward -= self.reward_params['stagnation_penalty']
+        
+        # Termination conditions
+        terminated = False
+        is_fall = False
+        if abs(state[0]) > 1.5: self.flipped_counter += 1
+        else: self.flipped_counter = 0
+        
+        if self.flipped_counter > self.flip_termination_steps: 
+            reward = -100; terminated = True; is_fall = True
+        if self.critical_contact or pos[0] < 0 or is_agent_dead: 
+            reward = -100; terminated = True; is_fall = True
+        if pos[0] > (TERRAIN_LENGTH + self.TERRAIN_STARTPAD - TERRAIN_END) * TERRAIN_STEP: 
+            terminated = True
+            
+        self.episodic_reward += reward
+        truncated = self.ts >= self.horizon
+
+        # Logging custom metrics
+        info['progress_x'] = pos[0]
+        info['body_height'] = pos[1]
+        if terminated or truncated:
+            info['is_fall'] = 1.0 if is_fall else 0.0
+            info['episode'] = {
+                'r': self.episodic_reward,
+                'l': self.ts,
+                'final_progress_x': pos[0]
+            }
+        # --- END: Advanced Reward Shaping & Logging ---
+
+        if self.render_mode == "human": self.render()
+        
+        return state, reward, terminated, truncated, info
+        
+    # ... (the rest of the file: _generate_terrain, render, etc. remains the same)
+    # ...
     def _create_terrain_fixtures(self):
         self.fd_polygon = fixtureDef(shape=polygonShape(vertices=[(0,0),(1,0),(1,-1),(0,-1)]), friction=FRICTION)
         self.fd_edge = fixtureDef(shape=edgeShape(vertices=[(0,0),(1,1)]), friction=FRICTION)
@@ -2810,43 +2962,7 @@ class ParametricContinuousParkour(gym.Env, EzPickle):
             if hasattr(part.userData, 'has_contact'): part.userData.has_contact = False
         self.prev_pos_x = self.agent_body.reference_head_object.position.x; self.last_progress_x = self.prev_pos_x
         return self._get_state(), {}
-
-    def step(self, action):
-        self.ts += 1; is_agent_dead = False
-        if hasattr(self.agent_body, "nb_steps_can_survive_outside_water") and self.nb_steps_outside_water > self.agent_body.nb_steps_can_survive_outside_water: is_agent_dead = True
-        if hasattr(self.agent_body, "nb_steps_can_survive_under_water") and self.nb_steps_under_water > self.agent_body.nb_steps_can_survive_under_water: is_agent_dead = True
-        if is_agent_dead: action = np.array([0] * self.action_space.shape[0])
-        self.agent_body.activate_motors(action)
-        if self.agent_body.body_type == BodyTypesEnum.CLIMBER: self.climbing_dynamics.before_step_climbing_dynamics(action, self.agent_body, self.world)
-        self.world.Step(1.0 / FPS, 6 * 30, 2 * 30)
-        if self.agent_body.body_type == BodyTypesEnum.CLIMBER: self.climbing_dynamics.after_step_climbing_dynamics(self.world.contactListener, self.world)
-        self.water_dynamics.calculate_forces(self.world.contactListener.fixture_pairs)
-        state = self._get_state(); pos = self.agent_body.reference_head_object.position; vel = self.agent_body.reference_head_object.linearVelocity
-        self.scroll = [pos[0] - self.rendering_viewer_w / SCALE / 5, pos[1] - self.rendering_viewer_h / SCALE / 2.5]
-        reward = 0; reward += self.reward_params['alive_bonus']
-        shaping = self.reward_params['progress_multiplier'] * pos[0] / SCALE 
-        if self.prev_shaping is not None: reward += shaping - self.prev_shaping
-        self.prev_shaping = shaping; reward += self.reward_params['velocity_multiplier'] * vel.x
-        if self.agent_body.body_type == BodyTypesEnum.CLIMBER:
-            num_sensors_touching = sum(1 for sensor in self.agent_body.sensors if sensor.userData.has_contact); reward += self.reward_params['grasp_bonus'] * num_sensors_touching
-        torque_penalty = 0
-        for a in action: torque_penalty += self.agent_body.TORQUE_PENALTY * self.reward_params['torque_penalty_multiplier'] * np.clip(np.abs(a), 0, 1)
-        reward -= torque_penalty; hull = self.agent_body.body_parts[0]
-        if hasattr(hull.userData, 'has_contact') and hull.userData.has_contact and self.agent_body.body_type == BodyTypesEnum.WALKER: reward -= self.reward_params['hull_contact_penalty']
-        if abs(pos.x - self.last_progress_x) < 0.01: self.stagnation_counter += 1
-        else: self.stagnation_counter = 0; self.last_progress_x = pos.x
-        if self.stagnation_counter > 100: reward -= self.reward_params['stagnation_penalty']
-        if abs(state[0]) > 1.5: self.flipped_counter += 1
-        else: self.flipped_counter = 0
-        terminated = False
-        if self.flipped_counter > self.flip_termination_steps: reward = -100; terminated = True
-        if self.critical_contact or pos[0] < 0 or is_agent_dead: reward = -100; terminated = True
-        if pos[0] > (TERRAIN_LENGTH + self.TERRAIN_STARTPAD - TERRAIN_END) * TERRAIN_STEP: terminated = True
-        self.episodic_reward += reward; truncated = self.ts >= self.horizon
-        if self.render_mode == "human": self.render()
-        info = {"success": self.episodic_reward > 230}
-        return state, reward, terminated, truncated, info
-
+        
     def _generate_terrain(self):
         self.cloud_poly, self.terrain_x, self.terrain_ground_y, self.terrain_ceiling_y, self.terrain_poly, self.terrain = [], [], [], [], [], []
         y = self.terrain_CPPN.generate(self.CPPN_input_vector) / self.TERRAIN_CPPN_SCALE; ground_y, ceiling_y = y[:, 0], y[:, 1]
@@ -5007,7 +5123,6 @@ class ClassicBipedalBody(WalkerAbstractBody):
             self.motors.append(joint_motor)
 
 ===== .\TeachMyAgent\environments\envs\bodies\walkers\MillipedeBody.py =====
-# TeachMyAgent/environments/envs/bodies/walkers/MillipedeBody.py
 import numpy as np
 from Box2D.b2 import edgeShape, circleShape, fixtureDef, polygonShape, revoluteJointDef, contactListener
 
@@ -6088,6 +6203,7 @@ class ClimbingDynamics(object):
     # START FIX: Add __init__ to create a list for joints that need to be destroyed
     def __init__(self):
         self.joints_to_destroy = []
+    # END FIX
         
     def before_step_climbing_dynamics(self, actions, body, world):
         '''
@@ -7366,107 +7482,86 @@ def add_render_args(parser):
     requirements.txt
     run.py
     configs/
-        main_pipeline.yaml
+        base_pipeline.yaml
+        algorithms/
+            acl_default.yaml
+            marl_default.yaml
+            ppo_default.yaml
+        environments/
+            parkour_default.yaml
     output/
         acl/
-            test_suite_transfer_acl/
+            acl_generalist_run/
+                logs/
+                    SAC_0/
+                        events.out.tfevents.1762277929.HoangNam.25508.1
+                models/
+            test_suite_acl/
+                student_final.zip
+                vecnormalize.pkl
+                logs/
+                    SAC_0/
+                        events.out.tfevents.1762276802.HoangNam.20472.1
+                        events.out.tfevents.1762277090.HoangNam.25036.1
+                        events.out.tfevents.1762277227.HoangNam.23376.1
+                        events.out.tfevents.1762277405.HoangNam.6880.1
+                models/
+                    student_stage_1.zip
+            ultimate_pipeline_acl_generalist/
                 vecnormalize.pkl
                 logs/
                     student/
                         SAC_0/
-                            events.out.tfevents.1762231790.HoangNam.14864.1
-                            events.out.tfevents.1762231875.HoangNam.1464.1
-                            events.out.tfevents.1762231968.HoangNam.8408.1
-                            events.out.tfevents.1762233562.HoangNam.9688.1
-                            events.out.tfevents.1762233770.HoangNam.19264.1
-                            events.out.tfevents.1762233950.HoangNam.23400.1
-                            events.out.tfevents.1762234473.HoangNam.7932.1
-                            events.out.tfevents.1762234749.HoangNam.21696.1
-                            events.out.tfevents.1762234853.HoangNam.15068.1
-                            events.out.tfevents.1762235037.HoangNam.19296.1
-                            events.out.tfevents.1762235270.HoangNam.12076.1
-                            events.out.tfevents.1762235337.HoangNam.18032.1
-                            events.out.tfevents.1762235520.HoangNam.24392.1
+                            events.out.tfevents.1762275393.HoangNam.17788.1
+                            events.out.tfevents.1762275900.HoangNam.19376.1
                 models/
-                    student_eval_temp.zip
                     student_final.zip
-                    student_test_suite_transfer_acl_stage_1.zip
-        marl/
-            test_suite_transfer_marl/
-                algorithm_state.pkl
-                class_and_ctor_args.pkl
-                rllib_checkpoint.json
-                env_runner/
-                    class_and_ctor_args.pkl
-                    metadata.json
-                    state.pkl
-                    env_to_module_connector/
-                        class_and_ctor_args.pkl
-                        metadata.json
-                        state.pkl
-                    module_to_env_connector/
-                        class_and_ctor_args.pkl
-                        metadata.json
-                        state.pkl
-                learner_group/
-                    class_and_ctor_args.pkl
-                    metadata.json
-                    state.pkl
-                    learner/
-                        class_and_ctor_args.pkl
-                        metadata.json
-                        state.pkl
-                        rl_module/
-                            class_and_ctor_args.pkl
-                            metadata.json
-                            module_state.pkl
-                            shared_policy/
-                                class_and_ctor_args.pkl
-                                metadata.json
-                                module_state.pkl
         ppo/
-            test_suite_transfer_ppo/
+            ppo_parkour_run/
                 vecnormalize.pkl
                 logs/
                     PPO_1/
-                        events.out.tfevents.1762231782.HoangNam.14864.0
-                    PPO_10/
-                        events.out.tfevents.1762234745.HoangNam.21696.0
-                    PPO_11/
-                        events.out.tfevents.1762234850.HoangNam.15068.0
-                    PPO_12/
-                        events.out.tfevents.1762235033.HoangNam.19296.0
-                    PPO_13/
-                        events.out.tfevents.1762235263.HoangNam.12076.0
-                    PPO_14/
-                        events.out.tfevents.1762235330.HoangNam.18032.0
-                    PPO_15/
-                        events.out.tfevents.1762235513.HoangNam.24392.0
+                        events.out.tfevents.1762277521.HoangNam.8808.0
                     PPO_2/
-                        events.out.tfevents.1762231868.HoangNam.1464.0
-                    PPO_3/
-                        events.out.tfevents.1762231964.HoangNam.8408.0
-                    PPO_4/
-                        events.out.tfevents.1762233555.HoangNam.9688.0
-                    PPO_5/
-                        events.out.tfevents.1762233763.HoangNam.19264.0
-                    PPO_6/
-                        events.out.tfevents.1762233942.HoangNam.23400.0
-                    PPO_7/
-                        events.out.tfevents.1762234262.HoangNam.22744.0
-                    PPO_8/
-                        events.out.tfevents.1762234386.HoangNam.24468.0
-                    PPO_9/
-                        events.out.tfevents.1762234469.HoangNam.7932.0
+                        events.out.tfevents.1762277777.HoangNam.25508.0
                 models/
-                    ppo_model_1024_steps.zip
-                    ppo_model_2048_steps.zip
-                    ppo_model_3072_steps.zip
-                    ppo_model_4096_steps.zip
-                    ppo_model_5120_steps.zip
-                    ppo_model_6144_steps.zip
-                    ppo_model_7168_steps.zip
-                    ppo_model_8192_steps.zip
+                    ppo_model_149952_steps.zip
+                    ppo_model_199936_steps.zip
+                    ppo_model_249920_steps.zip
+                    ppo_model_49984_steps.zip
+                    ppo_model_99968_steps.zip
+                    ppo_model_final.zip
+            test_suite_ppo/
+                vecnormalize.pkl
+                logs/
+                    PPO_1/
+                        events.out.tfevents.1762276801.HoangNam.20472.0
+                    PPO_2/
+                        events.out.tfevents.1762277090.HoangNam.25036.0
+                    PPO_3/
+                        events.out.tfevents.1762277226.HoangNam.23376.0
+                    PPO_4/
+                        events.out.tfevents.1762277404.HoangNam.6880.0
+                models/
+                    ppo_model_final.zip
+            ultimate_pipeline_ppo_pretrain/
+                vecnormalize.pkl
+                logs/
+                    PPO_1/
+                        events.out.tfevents.1762275230.HoangNam.17788.0
+                    PPO_2/
+                        events.out.tfevents.1762275575.HoangNam.19376.0
+                models/
+                    ppo_model_149952_steps.zip
+                    ppo_model_199936_steps.zip
+                    ppo_model_249920_steps.zip
+                    ppo_model_299904_steps.zip
+                    ppo_model_349888_steps.zip
+                    ppo_model_399872_steps.zip
+                    ppo_model_449856_steps.zip
+                    ppo_model_499840_steps.zip
+                    ppo_model_49984_steps.zip
+                    ppo_model_99968_steps.zip
                     ppo_model_final.zip
     preprocessing/
         convert_weight.py

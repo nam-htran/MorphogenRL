@@ -1,0 +1,10 @@
+env: "parkour"
+body: "classic_bipedal"
+horizon: 5000
+
+env_params:
+  input_vector: [-0.25, 0.8, 0.0]
+  water_level: 0.1
+  creepers_width: 0.25
+  creepers_height: 2.0
+  creepers_spacing: 1.5

@@ -1,0 +1,55 @@
+run_id: "acl_generalist_run"
+student_steps_per_stage: 250000
+total_stages: 20
+
+eval_episodes: 10
+mastery_threshold: -50.0
+n_envs: 32
+seed: 42
+
+difficulty_dims:
+  - input_vector_0
+  - input_vector_1
+  - input_vector_2
+  - water_level
+  - creepers_height
+  - creepers_spacing
+
+initial_difficulty: [0.0, 0.0, 0.0, 0.0, 0.0, 1.0]
+
+mastery_order:
+  - input_vector_0
+  - input_vector_1
+  - input_vector_2
+  - water_level
+  - creepers_height
+  - creepers_spacing
+
+difficulty_increments:
+  input_vector_0: 0.1
+  input_vector_1: 0.1
+  input_vector_2: 0.1
+  water_level: 0.05
+  creepers_height: 0.1
+  creepers_spacing: -0.05
+
+
+curriculum_replay:
+  enabled: true
+  replay_ratio: 0.25
+
+reward_shaping:
+  progress_multiplier: 200.0
+  velocity_multiplier: 0.5
+  torque_penalty_multiplier: 30.0
+  alive_bonus: 0.0
+  body_angle_penalty: 0.2
+  low_hull_penalty: 0.5
+
+ppo_config:
+  learning_rate: 0.0003
+  buffer_size: 1000000 
+  batch_size: 256
+  ent_coef: 'auto'
+  gamma: 0.99
+  learning_starts: 10000

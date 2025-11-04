@@ -1,4 +1,3 @@
-# TeachMyAgent/environments/envs/bodies/walkers/MillipedeBody.py
 import numpy as np
 from Box2D.b2 import edgeShape, circleShape, fixtureDef, polygonShape, revoluteJointDef, contactListener
 

@@ -2,10 +2,9 @@
 import argparse
 import os
 import sys
-import time
-import ray
 from collections.abc import Mapping
 from typing import Optional
+import ray
 from ray import tune, air
 from ray.rllib.algorithms.ppo import PPOConfig
 from ray.rllib.policy.policy import PolicySpec
@@ -13,23 +12,18 @@ from ray.tune.registry import register_env
 from gymnasium.wrappers import TransformObservation
 import numpy as np
 import gymnasium as gym
-import TeachMyAgent.environments
-import torch
-from stable_baselines3 import PPO, SAC 
-
-from ray.rllib.utils.metrics import (
-    ENV_RUNNER_RESULTS,
-    EPISODE_RETURN_MEAN,
-    LEARNER_RESULTS,
-    ALL_MODULES,
-)
 
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import TeachMyAgent.environments
 from TeachMyAgent.environments.envs.multi_agent_parametric_parkour import MultiAgentParkour
 from TeachMyAgent.environments.envs.interactive_multi_agent_parkour import InteractiveMultiAgentParkour
-from TeachMyAgent.environments.envs.parametric_continuous_parkour import ParametricContinuousParkour
+
+# START FIX: Add the missing print_header function
+def print_header(title: str):
+    width = 80
+    print("\n\n" + "#"*width + f"\n##{title:^76}##\n" + "#"*width)
+# END FIX
 
 def add_marl_args(parser: argparse.ArgumentParser) -> argparse.ArgumentParser:
     parser.add_argument("--mode", type=str, default="interactive", choices=["cooperative", "interactive"], help="Environment mode.")
@@ -38,17 +32,12 @@ def add_marl_args(parser: argparse.ArgumentParser) -> argparse.ArgumentParser:
     parser.add_argument("--iterations", type=int, default=100, help="Number of training iterations.")
     parser.add_argument("--num-workers", type=int, default=2, help="Number of Ray rollout workers.")
     parser.add_argument("--num-gpus", type=float, default=0, help="Number of GPUs to use for training.")
-    parser.add_argument("--check-env", action="store_true", help="Run a random environment check.")
-    parser.add_argument("--width", type=int, help="Render window width.")
-    parser.add_argument("--height", type=int, help="Render window height.")
-    parser.add_argument("--fullscreen", action="store_true", help="Render in fullscreen.")
     parser.add_argument("--run_id", type=str, default="marl_run1", help="Identifier for the training run.")
     parser.add_argument("--use-tune", action="store_true", help="Use Ray Tune for hyperparameter tuning.")
     parser.add_argument('--horizon', type=int, default=3000, help="Max steps per episode.")
     parser.add_argument("--reward-type", type=str, default="individual", choices=["individual", "shared"], help="MARL reward structure.")
     parser.add_argument("--shared-policy", action="store_true", help="Use a single shared policy for all agents.")
     parser.add_argument("--use-cc", action="store_true", help="Use a Centralized Critic.")
-    parser.add_argument("--pretrained_model_path", type=str, default=None, help="Path to a pre-trained SB3 model to start MARL from.")
     return parser
 
 def deep_update(original, new_dict):
@@ -101,20 +90,15 @@ def get_env_creator(mode):
         return TransformObservation(base_env, clip_multi_agent_obs, clipped_observation_space)
     return wrapped_env_creator
 
+
 def main(args: argparse.Namespace) -> Optional[str]:
-    if hasattr(args, 'check_env') and args.check_env: return
-
-    if not hasattr(args, 'horizon'): args.horizon = 3000
-
     env_name = f"marl-{args.mode}-v0"
     register_env(env_name, get_env_creator(args.mode))
     env_config = {"n_agents": args.n_agents, "agent_body_type": args.body, "horizon": args.horizon, "reward_type": args.reward_type}
     
-    # Create a temporary SINGLE-AGENT environment for loading SB3 models
-    temp_env_for_loading = ParametricContinuousParkour(agent_body_type=args.body)
-    # Use the observation/action space from the actual multi-agent env for the config
-    with get_env_creator(args.mode)(env_config) as temp_marl_env:
-        obs_space, act_space = temp_marl_env.observation_space["agent_0"], temp_marl_env.action_space["agent_0"]
+    temp_env = get_env_creator(args.mode)(env_config)
+    obs_space, act_space = temp_env.observation_space["agent_0"], temp_env.action_space["agent_0"]
+    temp_env.close()
 
     ppo_config_dict = getattr(args, 'ppo_config', {}); training_config = ppo_config_dict.get('training', {})
     model_config = ppo_config_dict.get('model', {}); env_runners_config = ppo_config_dict.get('env_runners', {})
@@ -124,47 +108,86 @@ def main(args: argparse.Namespace) -> Optional[str]:
         .rl_module(model_config=model_config).resources(num_gpus=args.num_gpus))
 
     if hasattr(args, 'shared_policy') and args.shared_policy:
-        print("Using Parameter Sharing.")
         config.multi_agent(policies={"shared_policy": PolicySpec(observation_space=obs_space, action_space=act_space)},
                            policy_mapping_fn=lambda agent_id, *a, **kw: "shared_policy")
     else:
-        print("Using Independent Learning.")
         config.multi_agent(policies={f"agent_{i}": PolicySpec(observation_space=obs_space, action_space=act_space) for i in range(args.n_agents)},
                            policy_mapping_fn=lambda agent_id, *a, **kw: agent_id)
 
     if hasattr(args, 'use_cc') and args.use_cc:
-        print("Activating Centralized Critic.")
         config.update_from_dict({"use_centralized_value_function": True})
 
     use_tune = getattr(args, 'use_tune', False)
+    output_dir = os.path.abspath(os.path.join("output", "marl", args.run_id))
 
     if use_tune:
-        pass # Tune logic (unchanged)
-    else:
-        print(f"Starting a single MARL training run for {args.iterations} iterations...")
-        algo = config.build()
-                
-        output_dir = os.path.abspath(os.path.join("output", "marl", args.run_id)); os.makedirs(output_dir, exist_ok=True)
-        print(f"Checkpoints will be saved to: {output_dir}")
-        print(f"TensorBoard logs will be saved under: {algo.logdir}")
+        print_header("STARTING RAY TUNE HYPERPARAMETER SEARCH")
+        tune_config = getattr(args, 'tune_config', {})
+        search_space = _parse_search_space(tune_config.get('search_space', {}))
+        
+        # Merge search space into the main config
+        config_dict = config.to_dict()
+        final_search_space = deep_update(config_dict, search_space)
 
-        best_reward, checkpoint_path_to_return = -float('inf'), None
+        # Configure stopper
+        stopper_config = tune_config.get('stopper', {})
+        stopper = ray.tune.stopper.ExperimentPlateauStopper(
+            metric=stopper_config.get("metric", "episode_reward_mean"),
+            std=stopper_config.get("std", 0.01),
+            patience=stopper_config.get("patience", 10),
+            top=stopper_config.get("top", 10),
+            mode=stopper_config.get("mode", "max")
+        )
+
+        run_config = air.RunConfig(
+            name=args.run_id,
+            stop=stopper,
+            local_dir=os.path.dirname(output_dir),
+            checkpoint_config=air.CheckpointConfig(
+                num_to_keep=3,
+                checkpoint_score_attribute="episode_reward_mean",
+                checkpoint_score_order="max"
+            ),
+        )
+
+        tuner = tune.Tuner(
+            "PPO",
+            param_space=final_search_space,
+            run_config=run_config,
+            tune_config=tune.TuneConfig(
+                num_samples=tune_config.get("num_samples", 10),
+                metric="episode_reward_mean",
+                mode="max",
+            ),
+        )
+        
+        results = tuner.fit()
+        best_result = results.get_best_result()
+        best_checkpoint_path = best_result.checkpoint.path
+        print(f"\nTune complete. Best checkpoint saved at: {best_checkpoint_path}")
+        print(f"Best hyperparameters found: {best_result.config}")
+        return best_checkpoint_path
+
+    else:
+        print_header(f"STARTING SINGLE MARL RUN ({args.iterations} ITERATIONS)")
+        algo = config.build()
+        
+        os.makedirs(output_dir, exist_ok=True)
+        print(f"Checkpoints will be saved to: {output_dir}")
+        print(f"TensorBoard logs: {algo.logdir}")
+
+        best_reward, best_checkpoint_path = -float('inf'), None
         for i in range(args.iterations):
             result = algo.train()
-            env_runner_results, learner_results = result.get(ENV_RUNNER_RESULTS, {}), result.get(LEARNER_RESULTS, {})
-            episode_reward_mean = env_runner_results.get(EPISODE_RETURN_MEAN, float("nan"))
+            reward_mean = result.get("episode_reward_mean", float('nan'))
             
-            if episode_reward_mean > best_reward:
-                best_reward = episode_reward_mean
+            if reward_mean > best_reward:
+                best_reward = reward_mean
                 checkpoint_result = algo.save(checkpoint_dir=output_dir)
-                checkpoint_path_to_return = checkpoint_result.checkpoint.path
-                print(f"\nNew best average reward: {best_reward:.2f}. Checkpoint saved at: {checkpoint_path_to_return}")
+                best_checkpoint_path = checkpoint_result.checkpoint.path
+                print(f"\nNew best avg reward: {best_reward:.2f}. Checkpoint: {best_checkpoint_path}")
             
-            per_policy_rewards = env_runner_results.get("module_episode_returns_mean", {})
-            total_loss_per_module = {mid: stats.get("total_loss", float("nan")) for mid, stats in learner_results.items() if mid != ALL_MODULES}
-            
-            print(f"Iter {i + 1}/{args.iterations}: Mean Reward: {episode_reward_mean:.2f}, Policy Rewards: {per_policy_rewards}, Module Loss: {total_loss_per_module}")
+            print(f"Iter {i+1}/{args.iterations}: Mean Reward: {reward_mean:.2f}")
         
-        print(f"\nTraining complete. Best checkpoint saved at: {checkpoint_path_to_return}")
-        temp_env_for_loading.close() 
-        return checkpoint_path_to_return
+        print(f"\nTraining complete. Best checkpoint at: {best_checkpoint_path}")
+        return best_checkpoint_path
