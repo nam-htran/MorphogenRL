@@ -1,6 +1,6 @@
 import os
 
-def save_all_source_code(output_path='_utils/codemoi.txt', excluded_dirs=None, excluded_files=None, included_ext=None):
+def save_all_source_code(output_path='_utils/output.txt', excluded_dirs=None, excluded_files=None, included_ext=None):
     if excluded_dirs is None:
         excluded_dirs = {
             '__pycache__', '_dataset', '_logs', '_model_trained', '_results',

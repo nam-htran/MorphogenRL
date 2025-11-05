@@ -253,11 +253,11 @@ STAGES:
     config_path: "configs/algorithms/ppo_default.yaml"
     env_config_path: "configs/environments/parkour_default.yaml"
   ACL:
-    enabled: true
+    enabled: false
     config_path: "configs/algorithms/acl_default.yaml"
     env_config_path: "configs/environments/parkour_default.yaml"
   MARL:
-    enabled: true 
+    enabled: false 
     config_path: "configs/algorithms/marl_default.yaml"
 
 WATCH:
@@ -266,89 +266,61 @@ WATCH:
   num_episodes: 5
 
 ===== .\configs\algorithms\acl_default.yaml =====
-run_id: "acl_generalist_run"
-student_steps_per_stage: 250000
-total_stages: 20
+run_id: "acl_generalist_8h_run"
+
+total_stages: 10
+student_steps_per_stage: 100000 
 
 eval_episodes: 10
-mastery_threshold: -50.0
-n_envs: 32
+mastery_threshold: 50.0 
+n_envs: 8
 seed: 42
 
 difficulty_dims:
   - input_vector_0
   - input_vector_1
-  - input_vector_2
   - water_level
   - creepers_height
   - creepers_spacing
 
-initial_difficulty: [0.0, 0.0, 0.0, 0.0, 0.0, 1.0]
+initial_difficulty: [0.0, 0.0, 0.0, 0.0, 1.0]
 
 mastery_order:
   - input_vector_0
   - input_vector_1
-  - input_vector_2
   - water_level
   - creepers_height
   - creepers_spacing
 
 difficulty_increments:
-  input_vector_0: 0.1
-  input_vector_1: 0.1
-  input_vector_2: 0.1
-  water_level: 0.05
-  creepers_height: 0.1
-  creepers_spacing: -0.05
-
-
-curriculum_replay:
-  enabled: true
-  replay_ratio: 0.25
-
-reward_shaping:
-  progress_multiplier: 200.0
-  velocity_multiplier: 0.5
-  torque_penalty_multiplier: 30.0
-  alive_bonus: 0.0
-  body_angle_penalty: 0.2
-  low_hull_penalty: 0.5
+  input_vector_0: 0.2
+  input_vector_1: 0.2
+  water_level: 0.1
+  creepers_height: 0.2
+  creepers_spacing: -0.1 # Giảm khoảng cách để làm khó hơn
 
 ppo_config:
   learning_rate: 0.0003
-  buffer_size: 1000000 
+  buffer_size: 500000
   batch_size: 256
   ent_coef: 'auto'
   gamma: 0.99
   learning_starts: 10000
 
 ===== .\configs\algorithms\marl_default.yaml =====
-run_id: "marl_coop_run"
+run_id: "marl_interactive_8h_run"
 mode: "interactive"
 n_agents: 2
-iterations: 150
-num_workers: 4
-num_gpus: 1
+
+iterations: 100
+num_workers: 3
+num_gpus: 2
 
 reward_type: "shared"
-shared_policy: true
+shared_policy: true 
 use_cc: true
 
-use_tune: false 
-tune_config:
-  num_samples: 20 
-  stopper:
-    patience: 5
-    metric: "episode_reward_mean"
-  search_space:
-    training:
-      lr: "tune.loguniform(1e-5, 1e-3)"
-      gamma: "tune.choice([0.99, 0.995])"
-      lambda_: "tune.uniform(0.9, 1.0)"
-      clip_param: "tune.choice([0.1, 0.2, 0.3])"
-      entropy_coeff: "tune.loguniform(0.001, 0.05)"
-    model:
-      fcnet_hiddens: "tune.choice([[64, 64], [128, 128], [256, 256]])"
+use_tune: false
 
 ppo_config:
   training:
@@ -367,27 +339,35 @@ ppo_config:
     rollout_fragment_length: 1024
 
 ===== .\configs\algorithms\ppo_default.yaml =====
-run_id: "ppo_parkour_run"
-total_timesteps: 2000000 
-save_freq: 500000
-n_envs: 32
+run_id: "ppo_base_8h_run"
+total_timesteps: 1000000 
+save_freq: 250000
+
+n_envs: 8
 seed: 42
 
+# CHANGE 2: Increased penalties/bonuses related to stability.
+# This encourages the agent to keep its body high and legs straight, which is crucial for the support leg.
 reward_shaping:
-  progress_multiplier: 200.0
-  velocity_multiplier: 0.5
-  torque_penalty_multiplier: 30.0
-  alive_bonus: 0.0
-  body_angle_penalty: 0.2
-  low_hull_penalty: 0.5
+  progress_multiplier: 400.0
+  velocity_multiplier: 2.0
+  torque_penalty_multiplier: 2.0
+  body_angle_penalty: 1.0
+  low_hull_penalty: 1.5          # <--- TĂNG HÌNH PHẠT KHI THÂN BỊ THẤP
+  standing_bonus_multiplier: 2.0 # <--- TĂNG THƯỞNG KHI DUỖI THẲNG GỐI
+
+  # New bonuses to guide the agent
+  foot_air_time_bonus: 0.2
+  gait_bonus: 0.2
 
 ppo_config:
-  gamma: 0.99 
-  n_steps: 4096
+  gamma: 0.995
+  n_steps: 8192
   ent_coef: 0.005
-  learning_rate: 3e-4
+  learning_rate: 0.00005 # <--- GIẢM TỪ 0.0001 (5e-5)
   n_epochs: 10
-  batch_size: 64
+  batch_size: 256
+  clip_range: 0.2
 
 ===== .\configs\environments\parkour_default.yaml =====
 env: "parkour"
@@ -2124,6 +2104,19 @@ if __name__ == '__main__':
 ===== .\TeachMyAgent\__init__.py =====
 
 
+===== .\TeachMyAgent\environments\parkour_flat_ground.yaml =====
+# configs/environments/parkour_flat_ground.yaml
+env: "parkour"
+# START CHANGE: Sử dụng body cũ đã được kiểm chứng
+body: "old_classic_bipedal"
+# END CHANGE
+horizon: 5000
+
+env_params:
+  input_vector: [0.0, 0.0, 0.0]
+  water_level: 0.0
+  creepers_height: 0.0
+
 ===== .\TeachMyAgent\environments\__init__.py =====
 from gymnasium.envs.registration import register
 
@@ -2654,6 +2647,7 @@ class MultiAgentParkour(MultiAgentEnv):
 
 
 ===== .\TeachMyAgent\environments\envs\parametric_continuous_parkour.py =====
+# TeachMyAgent/environments/envs/parametric_continuous_parkour.py
 import math
 import os
 
@@ -2671,7 +2665,6 @@ from TeachMyAgent.environments.envs.bodies.BodiesEnum import BodiesEnum
 from TeachMyAgent.environments.envs.bodies.BodyTypesEnum import BodyTypesEnum
 from TeachMyAgent.environments.envs.utils.custom_user_data import CustomUserDataObjectTypes, CustomUserData
 
-# ... (ContactDetector and LidarCallback classes remain the same) ...
 class ContactDetector(WaterContactDetector, ClimbingContactDetector):
     def __init__(self, env):
         super(ContactDetector, self).__init__(); self.env = env
@@ -2720,31 +2713,21 @@ class ParametricContinuousParkour(gym.Env, EzPickle):
         self.ts = 0
         self.flip_termination_steps = flip_termination_steps
         
-        reward_param_keys = [
-            'progress_multiplier', 'velocity_multiplier', 'torque_penalty_multiplier', 
-            'alive_bonus', 'stagnation_penalty', 'grasp_bonus', 'hull_contact_penalty',
-            'body_angle_penalty', 'low_hull_penalty' # Added new reward keys
-        ]
+        # All kwargs are now potential reward shaping parameters
+        self.reward_params = kwargs.copy()
         
-        walker_args = {}
-        reward_shaping_args = {}
-        for key, value in kwargs.items():
-            if key in reward_param_keys:
-                reward_shaping_args[key] = value
-            else:
-                walker_args[key] = value
-
-        self.reward_params = {
-            'progress_multiplier': reward_shaping_args.get('progress_multiplier', 130.0),
-            'velocity_multiplier': reward_shaping_args.get('velocity_multiplier', 0.3),
-            'torque_penalty_multiplier': reward_shaping_args.get('torque_penalty_multiplier', 40.0),
-            'alive_bonus': reward_shaping_args.get('alive_bonus', 0.0),
-            'stagnation_penalty': reward_shaping_args.get('stagnation_penalty', 0.1),
-            'grasp_bonus': reward_shaping_args.get('grasp_bonus', 0.02),
-            'hull_contact_penalty': reward_shaping_args.get('hull_contact_penalty', HULL_CONTACT_PENALTY),
-            'body_angle_penalty': reward_shaping_args.get('body_angle_penalty', 0.0),
-            'low_hull_penalty': reward_shaping_args.get('low_hull_penalty', 0.0)
+        # Set default values for any reward params not provided in kwargs
+        default_rewards = {
+            'progress_multiplier': 130.0, 'velocity_multiplier': 0.3, 
+            'torque_penalty_multiplier': 40.0, 'alive_bonus': 0.0,
+            'stagnation_penalty': 0.1, 'grasp_bonus': 0.02,
+            'hull_contact_penalty': HULL_CONTACT_PENALTY, 'body_angle_penalty': 0.0,
+            'low_hull_penalty': 0.0, 'standing_bonus_multiplier': 0.0,
+            'foot_air_time_bonus': 0.0, 'gait_bonus': 0.0
         }
+        for key, value in default_rewards.items():
+            if key not in self.reward_params:
+                self.reward_params[key] = value
 
         self.np_random = None
         if lidars_type == "down": self.lidar_angle = 1.5; self.lidar_y_offset = 0
@@ -2760,17 +2743,18 @@ class ParametricContinuousParkour(gym.Env, EzPickle):
 
         body_type = BodiesEnum.get_body_type(agent_body_type)
         
+        # The body constructor does not need reward params
+        body_constructor_args = {}
         if body_type in [BodyTypesEnum.SWIMMER, BodyTypesEnum.AMPHIBIAN]:
-            self.agent_body = BodiesEnum[agent_body_type].value(scale=SCALE, **walker_args)
-        else:
-            self.agent_body = BodiesEnum[agent_body_type].value(scale=SCALE, reset_on_hull_critical_contact=True, **walker_args)
+            body_constructor_args['density'] = WATER_DENSITY
+        
+        self.agent_body = BodiesEnum[agent_body_type].value(scale=SCALE, **body_constructor_args)
 
         self.terrain = []
         self.water_dynamics = WaterDynamics(self.world.gravity, max_push=water_clip)
         self.prev_shaping = None
         self.episodic_reward = 0
 
-        # ... (rest of __init__ is the same)
         self.TERRAIN_STARTPAD = max(INITIAL_TERRAIN_STARTPAD, self.agent_body.AGENT_WIDTH / TERRAIN_STEP + 5)
         self._create_terrain_fixtures()
 
@@ -2795,88 +2779,7 @@ class ParametricContinuousParkour(gym.Env, EzPickle):
             total_obs_size += len(self.agent_body.get_sensors_state())
         high = np.array([np.inf]*total_obs_size)
         self.observation_space = spaces.Box(-high, high, dtype=np.float32)
-
-
-    def step(self, action):
-        self.ts += 1; is_agent_dead = False
-        if hasattr(self.agent_body, "nb_steps_can_survive_outside_water") and self.nb_steps_outside_water > self.agent_body.nb_steps_can_survive_outside_water: is_agent_dead = True
-        if hasattr(self.agent_body, "nb_steps_can_survive_under_water") and self.nb_steps_under_water > self.agent_body.nb_steps_can_survive_under_water: is_agent_dead = True
-        if is_agent_dead: action = np.array([0] * self.action_space.shape[0])
-        
-        self.agent_body.activate_motors(action)
-        if self.agent_body.body_type == BodyTypesEnum.CLIMBER: self.climbing_dynamics.before_step_climbing_dynamics(action, self.agent_body, self.world)
-        self.world.Step(1.0 / FPS, 6 * 30, 2 * 30)
-        if self.agent_body.body_type == BodyTypesEnum.CLIMBER: self.climbing_dynamics.after_step_climbing_dynamics(self.world.contactListener, self.world)
-        self.water_dynamics.calculate_forces(self.world.contactListener.fixture_pairs)
-        
-        state = self._get_state()
-        pos = self.agent_body.reference_head_object.position
-        vel = self.agent_body.reference_head_object.linearVelocity
-        is_under_water = pos.y <= self.water_y
-        self.scroll = [pos[0] - self.rendering_viewer_w / SCALE / 5, pos[1] - self.rendering_viewer_h / SCALE / 2.5]
-        
-        # --- START: Advanced Reward Shaping & Logging ---
-        reward = 0
-        info = {}
-
-        # Progress and velocity rewards
-        shaping = self.reward_params['progress_multiplier'] * pos[0] / SCALE 
-        if self.prev_shaping is not None: reward += shaping - self.prev_shaping
-        self.prev_shaping = shaping
-        reward += self.reward_params['velocity_multiplier'] * vel.x
-        
-        # Penalties
-        reward -= self.reward_params['body_angle_penalty'] * abs(state[0]) # Penalty for not being upright
-        
-        if pos[1] < self.agent_body.AGENT_CENTER_HEIGHT * 0.7 and not is_under_water:
-            reward -= self.reward_params['low_hull_penalty'] # Penalty for "crawling"
-            
-        torque_penalty = sum(self.agent_body.TORQUE_PENALTY * self.reward_params['torque_penalty_multiplier'] * np.clip(np.abs(a), 0, 1) for a in action)
-        reward -= torque_penalty
-        
-        hull = self.agent_body.body_parts[0]
-        if hasattr(hull.userData, 'has_contact') and hull.userData.has_contact and self.agent_body.body_type == BodyTypesEnum.WALKER:
-            reward -= self.reward_params['hull_contact_penalty']
-
-        # Stagnation penalty
-        if abs(pos.x - self.last_progress_x) < 0.01: self.stagnation_counter += 1
-        else: self.stagnation_counter = 0; self.last_progress_x = pos.x
-        if self.stagnation_counter > 100: reward -= self.reward_params['stagnation_penalty']
-        
-        # Termination conditions
-        terminated = False
-        is_fall = False
-        if abs(state[0]) > 1.5: self.flipped_counter += 1
-        else: self.flipped_counter = 0
-        
-        if self.flipped_counter > self.flip_termination_steps: 
-            reward = -100; terminated = True; is_fall = True
-        if self.critical_contact or pos[0] < 0 or is_agent_dead: 
-            reward = -100; terminated = True; is_fall = True
-        if pos[0] > (TERRAIN_LENGTH + self.TERRAIN_STARTPAD - TERRAIN_END) * TERRAIN_STEP: 
-            terminated = True
-            
-        self.episodic_reward += reward
-        truncated = self.ts >= self.horizon
-
-        # Logging custom metrics
-        info['progress_x'] = pos[0]
-        info['body_height'] = pos[1]
-        if terminated or truncated:
-            info['is_fall'] = 1.0 if is_fall else 0.0
-            info['episode'] = {
-                'r': self.episodic_reward,
-                'l': self.ts,
-                'final_progress_x': pos[0]
-            }
-        # --- END: Advanced Reward Shaping & Logging ---
-
-        if self.render_mode == "human": self.render()
-        
-        return state, reward, terminated, truncated, info
-        
-    # ... (the rest of the file: _generate_terrain, render, etc. remains the same)
-    # ...
+    
     def _create_terrain_fixtures(self):
         self.fd_polygon = fixtureDef(shape=polygonShape(vertices=[(0,0),(1,0),(1,-1),(0,-1)]), friction=FRICTION)
         self.fd_edge = fixtureDef(shape=edgeShape(vertices=[(0,0),(1,1)]), friction=FRICTION)
@@ -2889,7 +2792,7 @@ class ParametricContinuousParkour(gym.Env, EzPickle):
             spawn_margin = 0.5
             init_y = TERRAIN_HEIGHT + self.ceiling_offset - (self.agent_body.AGENT_HEIGHT / 2) - spawn_margin
         else:
-            spawn_buffer = 0.5
+            spawn_buffer = 2.0
             if hasattr(self, 'terrain_ground_y') and len(self.terrain_ground_y) > int(self.TERRAIN_STARTPAD / 2):
                 ground_y = self.terrain_ground_y[int(self.TERRAIN_STARTPAD / 2)]
             else:
@@ -2962,7 +2865,116 @@ class ParametricContinuousParkour(gym.Env, EzPickle):
             if hasattr(part.userData, 'has_contact'): part.userData.has_contact = False
         self.prev_pos_x = self.agent_body.reference_head_object.position.x; self.last_progress_x = self.prev_pos_x
         return self._get_state(), {}
+
+    def step(self, action):
+        self.ts += 1; is_agent_dead = False
+        if hasattr(self.agent_body, "nb_steps_can_survive_outside_water") and self.nb_steps_outside_water > self.agent_body.nb_steps_can_survive_outside_water: is_agent_dead = True
+        if hasattr(self.agent_body, "nb_steps_can_survive_under_water") and self.nb_steps_under_water > self.agent_body.nb_steps_can_survive_under_water: is_agent_dead = True
+        if is_agent_dead: action = np.array([0] * self.action_space.shape[0])
         
+        self.agent_body.activate_motors(action)
+        if self.agent_body.body_type == BodyTypesEnum.CLIMBER: self.climbing_dynamics.before_step_climbing_dynamics(action, self.agent_body, self.world)
+        self.world.Step(1.0 / FPS, 6 * 30, 2 * 30)
+        if self.agent_body.body_type == BodyTypesEnum.CLIMBER: self.climbing_dynamics.after_step_climbing_dynamics(self.world.contactListener, self.world)
+        self.water_dynamics.calculate_forces(self.world.contactListener.fixture_pairs)
+        
+        state = self._get_state()
+        pos = self.agent_body.reference_head_object.position
+        vel = self.agent_body.reference_head_object.linearVelocity
+        is_under_water = pos.y <= self.water_y
+        self.scroll = [pos[0] - self.rendering_viewer_w / SCALE / 5, pos[1] - self.rendering_viewer_h / SCALE / 2.5]
+        
+        reward = 0
+        info = {}
+
+        # Progress and velocity rewards
+        shaping = self.reward_params['progress_multiplier'] * pos[0] / SCALE 
+        if self.prev_shaping is not None: reward += shaping - self.prev_shaping
+        self.prev_shaping = shaping
+        reward += self.reward_params['velocity_multiplier'] * vel.x
+        
+        # --- START: NEW FOOT AIR-TIME & GAIT BONUS ---
+        # Only apply these bonuses for bipedal walkers with 4 motors
+        if self.agent_body.body_type == BodyTypesEnum.WALKER and len(self.agent_body.motors) == 4:
+            # Assuming right leg motors are 0 (hip) and 1 (knee), left are 2 (hip) and 3 (knee)
+            # The foot is the contact_body of the knee motor
+            right_foot = self.agent_body.motors[1].userData.contact_body
+            left_foot = self.agent_body.motors[3].userData.contact_body
+            
+            # Reward for lifting a foot off the ground
+            air_time_bonus = 0.0
+            if not right_foot.userData.has_contact:
+                air_time_bonus += self.reward_params.get('foot_air_time_bonus', 0.0)
+            if not left_foot.userData.has_contact:
+                air_time_bonus += self.reward_params.get('foot_air_time_bonus', 0.0)
+            reward += air_time_bonus
+            
+            # Reward for alternating leg movement (gait)
+            # Check the speed of the hip joints
+            right_hip_speed = self.agent_body.motors[0].speed
+            left_hip_speed = self.agent_body.motors[2].speed
+            # If hip speeds have opposite signs, they are moving in opposite directions (good gait)
+            if right_hip_speed * left_hip_speed < 0:
+                reward += self.reward_params.get('gait_bonus', 0.0)
+        # --- END: NEW FOOT AIR-TIME & GAIT BONUS ---
+        
+        # Knee-based standing bonus
+        if self.reward_params.get('standing_bonus_multiplier', 0.0) > 0 and not is_under_water:
+            if len(self.agent_body.motors) >= 2:
+                knee_joints = self.agent_body.motors[-2:] 
+                knee_straight_bonus = 0.0
+                for joint in knee_joints:
+                    normalized_angle = (joint.angle - joint.lowerLimit) / (joint.upperLimit - joint.lowerLimit)
+                    knee_straight_bonus += normalized_angle
+                knee_straight_bonus /= len(knee_joints)
+                reward += self.reward_params['standing_bonus_multiplier'] * knee_straight_bonus
+
+        # Penalties
+        reward -= self.reward_params['body_angle_penalty'] * abs(state[0])
+        
+        ground_y = TERRAIN_HEIGHT
+        current_x_idx = int(pos.x / TERRAIN_STEP)
+        if 0 <= current_x_idx < len(self.terrain_ground_y):
+            ground_y = self.terrain_ground_y[current_x_idx]
+        current_height_from_ground = pos.y - ground_y
+
+        if current_height_from_ground < self.agent_body.AGENT_CENTER_HEIGHT * 0.5 and not is_under_water:
+            reward -= self.reward_params['low_hull_penalty']
+            
+        torque_penalty = sum(self.agent_body.TORQUE_PENALTY * self.reward_params['torque_penalty_multiplier'] * np.clip(np.abs(a), 0, 1) for a in action)
+        reward -= torque_penalty
+        
+        # Stagnation penalty
+        if abs(pos.x - self.last_progress_x) < 0.01: self.stagnation_counter += 1
+        else: self.stagnation_counter = 0; self.last_progress_x = pos.x
+        if self.stagnation_counter > 100: reward -= self.reward_params['stagnation_penalty']
+        
+        # Termination conditions
+        terminated = False
+        is_fall = False
+        if abs(state[0]) > 1.5: self.flipped_counter += 1
+        else: self.flipped_counter = 0
+        
+        if self.flipped_counter > self.flip_termination_steps: 
+            reward = -100; terminated = True; is_fall = True
+        if self.critical_contact or pos[0] < 0 or is_agent_dead: 
+            reward = -100; terminated = True; is_fall = True
+        if pos[0] > (TERRAIN_LENGTH + self.TERRAIN_STARTPAD - TERRAIN_END) * TERRAIN_STEP: 
+            terminated = True
+            
+        self.episodic_reward += reward
+        truncated = self.ts >= self.horizon
+
+        info['progress_x'] = pos[0]
+        info['body_height'] = pos[1]
+        if terminated or truncated:
+            info['is_fall'] = 1.0 if is_fall else 0.0
+            info['episode'] = { 'r': self.episodic_reward, 'l': self.ts, 'final_progress_x': pos[0] }
+
+        if self.render_mode == "human": self.render()
+        
+        return state, reward, terminated, truncated, info
+
     def _generate_terrain(self):
         self.cloud_poly, self.terrain_x, self.terrain_ground_y, self.terrain_ceiling_y, self.terrain_poly, self.terrain = [], [], [], [], [], []
         y = self.terrain_CPPN.generate(self.CPPN_input_vector) / self.TERRAIN_CPPN_SCALE; ground_y, ceiling_y = y[:, 0], y[:, 1]
@@ -4985,6 +4997,8 @@ class BigQuadruBody(WalkerAbstractBody):
                 self.motors.append(joint_motor)
 
 ===== .\TeachMyAgent\environments\envs\bodies\walkers\ClassicBipedalBody.py =====
+# TeachMyAgent/environments/envs/bodies/walkers/ClassicBipedalBody.py
+
 import numpy as np
 from Box2D.b2 import edgeShape, circleShape, fixtureDef, polygonShape, revoluteJointDef, contactListener
 
@@ -5002,23 +5016,12 @@ SPEED_KNEE    = 6
 class ClassicBipedalBody(WalkerAbstractBody):
     '''
         New version of the Bipedal walker implemented in https://gym.openai.com/envs/BipedalWalker-v2/.
-
-        In the initial version, the embodiment is created with an angle on legs, but position are not set according to this.
-        This results in bodies with wrong positions that Box2D's solver has to reposition at the first step of the environment.
-        This new version uses straight legs and fixed bad positions.
     '''
-    def __init__(self, scale, motors_torque=120, nb_steps_under_water=600, reset_on_hull_critical_contact=False):
-        '''
-            Creates a bipedal walker.
-
-            Args:
-                scale: Scale value used in the environment (to adapt the embodiment to its environment)
-                motors_torque: Maximum torque the embodiment can use on its motors
-                nb_steps_under_water: How many consecutive steps the embodiment can survive under water
-                reset_on_hull_critical_contact: Whether a contact detected with the head should stop the episode
-        '''
+    # CHANGE: Increased motor torque to 200 to ensure the agent is physically strong enough
+    # to support its body on a single leg.
+    def __init__(self, scale, motors_torque=200, nb_steps_under_water=600, reset_on_hull_critical_contact=False):
         super(ClassicBipedalBody, self).__init__(scale, motors_torque, nb_steps_under_water)
-        self.LEG_DOWN = 3 / self.SCALE # 0 = center of hull
+        self.LEG_DOWN = 3 / self.SCALE 
         self.LEG_W, self.LEG_H = 8 / self.SCALE, 34 / self.SCALE
         self.TORQUE_PENALTY = 0.00035
         self.reset_on_hull_critical_contact = reset_on_hull_critical_contact
@@ -5029,13 +5032,15 @@ class ClassicBipedalBody(WalkerAbstractBody):
         self.AGENT_CENTER_HEIGHT = self.LEG_H * 2 + self.LEG_DOWN
 
     def draw(self, world, init_x, init_y, force_to_center):
+        # Reduced hull density to make the body lighter.
+        # This significantly reduces the load on the support leg, making it easier to maintain balance.
         HULL_FIXTURES = [
             fixtureDef(
                 shape=polygonShape(vertices=[(x / self.SCALE, y / self.SCALE) for x, y in polygon]),
-                density=5.0,
+                density=4.0, 
                 friction=0.1,
                 categoryBits=0x20,
-                maskBits=0x000F)  # 0.99 bouncy
+                maskBits=0x000F)
             for polygon in HULL_POLYGONS
         ]
 
@@ -5051,7 +5056,9 @@ class ClassicBipedalBody(WalkerAbstractBody):
             density=1.0,
             restitution=0.0,
             categoryBits=0x20,
-            maskBits=0x000F)
+            maskBits=0x000F,
+            friction=2.0
+        )
 
         hull = world.CreateDynamicBody(
             position=(init_x, init_y),
@@ -5068,15 +5075,17 @@ class ClassicBipedalBody(WalkerAbstractBody):
         for i in [-1, +1]:
             leg = world.CreateDynamicBody(
                 position=(init_x, init_y - self.LEG_H / 2 - self.LEG_DOWN),
-                #angle=(i * 0.05),#2°
                 fixtures=LEG_FD
             )
             leg.color1 = (0.6 - i / 10., 0.3 - i / 10., 0.5 - i / 10.)
             leg.color2 = (0.4 - i / 10., 0.2 - i / 10., 0.3 - i / 10.)
+            
+            hip_anchor_x = init_x + i * self.LEG_W / 4 
+            
             rjd = revoluteJointDef(
                 bodyA=hull,
                 bodyB=leg,
-                anchor=(init_x, init_y - self.LEG_DOWN),
+                anchor=(hip_anchor_x, init_y - self.LEG_DOWN),
                 enableMotor=True,
                 enableLimit=True,
                 maxMotorTorque=self.MOTORS_TORQUE,
@@ -5094,7 +5103,6 @@ class ClassicBipedalBody(WalkerAbstractBody):
 
             lower = world.CreateDynamicBody(
                 position=(init_x, init_y - self.LEG_H * 3 / 2 - self.LEG_DOWN),
-                #angle=(i * 0.05), #2°
                 fixtures=LOWER_FD
             )
             lower.color1 = (0.6 - i / 10., 0.3 - i / 10., 0.5 - i / 10.)
@@ -5108,7 +5116,7 @@ class ClassicBipedalBody(WalkerAbstractBody):
                 maxMotorTorque=self.MOTORS_TORQUE,
                 motorSpeed=1,
                 lowerAngle=-1.6,
-                upperAngle=-0.1,
+                upperAngle=0.0,
             )
 
             lower.userData = CustomBodyUserData(True, name="lower")
@@ -7491,77 +7499,65 @@ def add_render_args(parser):
             parkour_default.yaml
     output/
         acl/
-            acl_generalist_run/
-                logs/
-                    SAC_0/
-                        events.out.tfevents.1762277929.HoangNam.25508.1
-                models/
-            test_suite_acl/
+            acl_generalist_8h_run/
                 student_final.zip
                 vecnormalize.pkl
                 logs/
                     SAC_0/
-                        events.out.tfevents.1762276802.HoangNam.20472.1
-                        events.out.tfevents.1762277090.HoangNam.25036.1
-                        events.out.tfevents.1762277227.HoangNam.23376.1
-                        events.out.tfevents.1762277405.HoangNam.6880.1
-                models/
-                    student_stage_1.zip
-            ultimate_pipeline_acl_generalist/
-                vecnormalize.pkl
-                logs/
-                    student/
-                        SAC_0/
-                            events.out.tfevents.1762275393.HoangNam.17788.1
-                            events.out.tfevents.1762275900.HoangNam.19376.1
-                models/
-                    student_final.zip
+                        events.out.tfevents.1762294139.151b7de8ab89.1038.1
         ppo/
-            ppo_parkour_run/
+            ppo_base_8h_run/
                 vecnormalize.pkl
                 logs/
                     PPO_1/
-                        events.out.tfevents.1762277521.HoangNam.8808.0
+                        events.out.tfevents.1762293450.151b7de8ab89.1038.0
+                    PPO_10/
+                        events.out.tfevents.1762353446.HoangNam.16220.0
+                    PPO_11/
+                        events.out.tfevents.1762354205.HoangNam.16860.0
+                    PPO_12/
+                        events.out.tfevents.1762354973.HoangNam.19080.0
+                    PPO_13/
+                        events.out.tfevents.1762355848.HoangNam.5448.0
+                    PPO_14/
+                        events.out.tfevents.1762356721.HoangNam.9880.0
+                    PPO_15/
+                        events.out.tfevents.1762357512.HoangNam.2548.0
+                    PPO_16/
+                        events.out.tfevents.1762358160.HoangNam.10892.0
+                    PPO_17/
+                        events.out.tfevents.1762358626.HoangNam.14748.0
+                    PPO_18/
+                        events.out.tfevents.1762359087.HoangNam.8872.0
+                    PPO_19/
+                        events.out.tfevents.1762359637.HoangNam.6332.0
                     PPO_2/
-                        events.out.tfevents.1762277777.HoangNam.25508.0
-                models/
-                    ppo_model_149952_steps.zip
-                    ppo_model_199936_steps.zip
-                    ppo_model_249920_steps.zip
-                    ppo_model_49984_steps.zip
-                    ppo_model_99968_steps.zip
-                    ppo_model_final.zip
-            test_suite_ppo/
-                vecnormalize.pkl
-                logs/
-                    PPO_1/
-                        events.out.tfevents.1762276801.HoangNam.20472.0
-                    PPO_2/
-                        events.out.tfevents.1762277090.HoangNam.25036.0
+                        events.out.tfevents.1762342615.HoangNam.9208.0
+                    PPO_20/
+                        events.out.tfevents.1762360093.HoangNam.16252.0
+                    PPO_21/
+                        events.out.tfevents.1762360545.HoangNam.18080.0
+                    PPO_22/
+                        events.out.tfevents.1762360982.HoangNam.6872.0
                     PPO_3/
-                        events.out.tfevents.1762277226.HoangNam.23376.0
+                        events.out.tfevents.1762343478.HoangNam.19168.0
                     PPO_4/
-                        events.out.tfevents.1762277404.HoangNam.6880.0
+                        events.out.tfevents.1762344338.HoangNam.14028.0
+                    PPO_5/
+                        events.out.tfevents.1762346167.HoangNam.6728.0
+                    PPO_6/
+                        events.out.tfevents.1762347083.HoangNam.6224.0
+                    PPO_7/
+                        events.out.tfevents.1762347947.HoangNam.9916.0
+                    PPO_8/
+                        events.out.tfevents.1762348881.HoangNam.7424.0
+                    PPO_9/
+                        events.out.tfevents.1762351951.HoangNam.15532.0
                 models/
-                    ppo_model_final.zip
-            ultimate_pipeline_ppo_pretrain/
-                vecnormalize.pkl
-                logs/
-                    PPO_1/
-                        events.out.tfevents.1762275230.HoangNam.17788.0
-                    PPO_2/
-                        events.out.tfevents.1762275575.HoangNam.19376.0
-                models/
-                    ppo_model_149952_steps.zip
-                    ppo_model_199936_steps.zip
-                    ppo_model_249920_steps.zip
-                    ppo_model_299904_steps.zip
-                    ppo_model_349888_steps.zip
-                    ppo_model_399872_steps.zip
-                    ppo_model_449856_steps.zip
-                    ppo_model_499840_steps.zip
-                    ppo_model_49984_steps.zip
-                    ppo_model_99968_steps.zip
+                    ppo_model_1000000_steps.zip
+                    ppo_model_250000_steps.zip
+                    ppo_model_500000_steps.zip
+                    ppo_model_750000_steps.zip
                     ppo_model_final.zip
     preprocessing/
         convert_weight.py
@@ -7582,6 +7578,7 @@ def add_render_args(parser):
     TeachMyAgent/
         __init__.py
         environments/
+            parkour_flat_ground.yaml
             __init__.py
             envs/
                 interactive_multi_agent_parkour.py

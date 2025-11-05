@@ -64,33 +64,21 @@ class ParametricContinuousParkour(gym.Env, EzPickle):
         self.ts = 0
         self.flip_termination_steps = flip_termination_steps
         
-        reward_param_keys = [
-            'progress_multiplier', 'velocity_multiplier', 'torque_penalty_multiplier', 
-            'alive_bonus', 'stagnation_penalty', 'grasp_bonus', 'hull_contact_penalty',
-            'body_angle_penalty', 'low_hull_penalty',
-            'standing_bonus_multiplier'
-        ]
+        # All kwargs are now potential reward shaping parameters
+        self.reward_params = kwargs.copy()
         
-        walker_args = {}
-        reward_shaping_args = {}
-        for key, value in kwargs.items():
-            if key in reward_param_keys:
-                reward_shaping_args[key] = value
-            else:
-                walker_args[key] = value
-
-        self.reward_params = {
-            'progress_multiplier': reward_shaping_args.get('progress_multiplier', 130.0),
-            'velocity_multiplier': reward_shaping_args.get('velocity_multiplier', 0.3),
-            'torque_penalty_multiplier': reward_shaping_args.get('torque_penalty_multiplier', 40.0),
-            'alive_bonus': reward_shaping_args.get('alive_bonus', 0.0),
-            'stagnation_penalty': reward_shaping_args.get('stagnation_penalty', 0.1),
-            'grasp_bonus': reward_shaping_args.get('grasp_bonus', 0.02),
-            'hull_contact_penalty': reward_shaping_args.get('hull_contact_penalty', HULL_CONTACT_PENALTY),
-            'body_angle_penalty': reward_shaping_args.get('body_angle_penalty', 0.0),
-            'low_hull_penalty': reward_shaping_args.get('low_hull_penalty', 0.0),
-            'standing_bonus_multiplier': reward_shaping_args.get('standing_bonus_multiplier', 0.0)
+        # Set default values for any reward params not provided in kwargs
+        default_rewards = {
+            'progress_multiplier': 130.0, 'velocity_multiplier': 0.3, 
+            'torque_penalty_multiplier': 40.0, 'alive_bonus': 0.0,
+            'stagnation_penalty': 0.1, 'grasp_bonus': 0.02,
+            'hull_contact_penalty': HULL_CONTACT_PENALTY, 'body_angle_penalty': 0.0,
+            'low_hull_penalty': 0.0, 'standing_bonus_multiplier': 0.0,
+            'foot_air_time_bonus': 0.0, 'gait_bonus': 0.0
         }
+        for key, value in default_rewards.items():
+            if key not in self.reward_params:
+                self.reward_params[key] = value
 
         self.np_random = None
         if lidars_type == "down": self.lidar_angle = 1.5; self.lidar_y_offset = 0
@@ -106,10 +94,12 @@ class ParametricContinuousParkour(gym.Env, EzPickle):
 
         body_type = BodiesEnum.get_body_type(agent_body_type)
         
+        # The body constructor does not need reward params
+        body_constructor_args = {}
         if body_type in [BodyTypesEnum.SWIMMER, BodyTypesEnum.AMPHIBIAN]:
-            self.agent_body = BodiesEnum[agent_body_type].value(scale=SCALE, **walker_args)
-        else:
-            self.agent_body = BodiesEnum[agent_body_type].value(scale=SCALE, reset_on_hull_critical_contact=True, **walker_args)
+            body_constructor_args['density'] = WATER_DENSITY
+        
+        self.agent_body = BodiesEnum[agent_body_type].value(scale=SCALE, **body_constructor_args)
 
         self.terrain = []
         self.water_dynamics = WaterDynamics(self.world.gravity, max_push=water_clip)
@@ -254,21 +244,41 @@ class ParametricContinuousParkour(gym.Env, EzPickle):
         self.prev_shaping = shaping
         reward += self.reward_params['velocity_multiplier'] * vel.x
         
-        # --- START: NEW KNEE-BASED STANDING BONUS LOGIC ---
-        if self.reward_params['standing_bonus_multiplier'] > 0 and not is_under_water:
-            # Assumes the last two motors are the knee joints for classic_bipedal
+        # --- START: NEW FOOT AIR-TIME & GAIT BONUS ---
+        # Only apply these bonuses for bipedal walkers with 4 motors
+        if self.agent_body.body_type == BodyTypesEnum.WALKER and len(self.agent_body.motors) == 4:
+            # Assuming right leg motors are 0 (hip) and 1 (knee), left are 2 (hip) and 3 (knee)
+            # The foot is the contact_body of the knee motor
+            right_foot = self.agent_body.motors[1].userData.contact_body
+            left_foot = self.agent_body.motors[3].userData.contact_body
+            
+            # Reward for lifting a foot off the ground
+            air_time_bonus = 0.0
+            if not right_foot.userData.has_contact:
+                air_time_bonus += self.reward_params.get('foot_air_time_bonus', 0.0)
+            if not left_foot.userData.has_contact:
+                air_time_bonus += self.reward_params.get('foot_air_time_bonus', 0.0)
+            reward += air_time_bonus
+            
+            # Reward for alternating leg movement (gait)
+            # Check the speed of the hip joints
+            right_hip_speed = self.agent_body.motors[0].speed
+            left_hip_speed = self.agent_body.motors[2].speed
+            # If hip speeds have opposite signs, they are moving in opposite directions (good gait)
+            if right_hip_speed * left_hip_speed < 0:
+                reward += self.reward_params.get('gait_bonus', 0.0)
+        # --- END: NEW FOOT AIR-TIME & GAIT BONUS ---
+        
+        # Knee-based standing bonus
+        if self.reward_params.get('standing_bonus_multiplier', 0.0) > 0 and not is_under_water:
             if len(self.agent_body.motors) >= 2:
                 knee_joints = self.agent_body.motors[-2:] 
-                
                 knee_straight_bonus = 0.0
                 for joint in knee_joints:
-                    # Normalize angle: 0 for fully bent, 1 for fully straight
                     normalized_angle = (joint.angle - joint.lowerLimit) / (joint.upperLimit - joint.lowerLimit)
                     knee_straight_bonus += normalized_angle
-
                 knee_straight_bonus /= len(knee_joints)
                 reward += self.reward_params['standing_bonus_multiplier'] * knee_straight_bonus
-        # --- END: NEW KNEE-BASED STANDING BONUS LOGIC ---
 
         # Penalties
         reward -= self.reward_params['body_angle_penalty'] * abs(state[0])
@@ -285,10 +295,6 @@ class ParametricContinuousParkour(gym.Env, EzPickle):
         torque_penalty = sum(self.agent_body.TORQUE_PENALTY * self.reward_params['torque_penalty_multiplier'] * np.clip(np.abs(a), 0, 1) for a in action)
         reward -= torque_penalty
         
-        # hull = self.agent_body.body_parts[0]
-        # if hasattr(hull.userData, 'has_contact') and hull.userData.has_contact and self.agent_body.body_type == BodyTypesEnum.WALKER:
-        #     reward -= self.reward_params['hull_contact_penalty']
-
         # Stagnation penalty
         if abs(pos.x - self.last_progress_x) < 0.01: self.stagnation_counter += 1
         else: self.stagnation_counter = 0; self.last_progress_x = pos.x
@@ -310,16 +316,11 @@ class ParametricContinuousParkour(gym.Env, EzPickle):
         self.episodic_reward += reward
         truncated = self.ts >= self.horizon
 
-        # Logging custom metrics
         info['progress_x'] = pos[0]
         info['body_height'] = pos[1]
         if terminated or truncated:
             info['is_fall'] = 1.0 if is_fall else 0.0
-            info['episode'] = {
-                'r': self.episodic_reward,
-                'l': self.ts,
-                'final_progress_x': pos[0]
-            }
+            info['episode'] = { 'r': self.episodic_reward, 'l': self.ts, 'final_progress_x': pos[0] }
 
         if self.render_mode == "human": self.render()
         

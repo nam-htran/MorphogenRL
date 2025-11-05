@@ -5,19 +5,25 @@ save_freq: 250000
 n_envs: 8
 seed: 42
 
+# CHANGE 2: Increased penalties/bonuses related to stability.
+# This encourages the agent to keep its body high and legs straight, which is crucial for the support leg.
 reward_shaping:
   progress_multiplier: 400.0
-  velocity_multiplier: 3.0
-  torque_penalty_multiplier: 20.0
-  body_angle_penalty: 0.5
-  low_hull_penalty: 0.2
-  standing_bonus_multiplier: 1.0
+  velocity_multiplier: 2.0
+  torque_penalty_multiplier: 2.0
+  body_angle_penalty: 1.0
+  low_hull_penalty: 1.5          # <--- TĂNG HÌNH PHẠT KHI THÂN BỊ THẤP
+  standing_bonus_multiplier: 2.0 # <--- TĂNG THƯỞNG KHI DUỖI THẲNG GỐI
+
+  # New bonuses to guide the agent
+  foot_air_time_bonus: 0.2
+  gait_bonus: 0.2
 
 ppo_config:
   gamma: 0.995
-  n_steps: 8192 
+  n_steps: 8192
   ent_coef: 0.005
-  learning_rate: 0.0001
+  learning_rate: 0.00005 # <--- GIẢM TỪ 0.0001 (5e-5)
   n_epochs: 10
   batch_size: 256
   clip_range: 0.2

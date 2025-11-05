@@ -7,11 +7,11 @@ STAGES:
     config_path: "configs/algorithms/ppo_default.yaml"
     env_config_path: "configs/environments/parkour_default.yaml"
   ACL:
-    enabled: true
+    enabled: false
     config_path: "configs/algorithms/acl_default.yaml"
     env_config_path: "configs/environments/parkour_default.yaml"
   MARL:
-    enabled: true 
+    enabled: false 
     config_path: "configs/algorithms/marl_default.yaml"
 
 WATCH:

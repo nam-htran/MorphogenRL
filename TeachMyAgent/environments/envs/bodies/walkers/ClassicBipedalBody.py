@@ -1,3 +1,5 @@
+# TeachMyAgent/environments/envs/bodies/walkers/ClassicBipedalBody.py
+
 import numpy as np
 from Box2D.b2 import edgeShape, circleShape, fixtureDef, polygonShape, revoluteJointDef, contactListener
 
@@ -15,23 +17,12 @@ SPEED_KNEE    = 6
 class ClassicBipedalBody(WalkerAbstractBody):
     '''
         New version of the Bipedal walker implemented in https://gym.openai.com/envs/BipedalWalker-v2/.
-
-        In the initial version, the embodiment is created with an angle on legs, but position are not set according to this.
-        This results in bodies with wrong positions that Box2D's solver has to reposition at the first step of the environment.
-        This new version uses straight legs and fixed bad positions.
     '''
-    def __init__(self, scale, motors_torque=120, nb_steps_under_water=600, reset_on_hull_critical_contact=False):
-        '''
-            Creates a bipedal walker.
-
-            Args:
-                scale: Scale value used in the environment (to adapt the embodiment to its environment)
-                motors_torque: Maximum torque the embodiment can use on its motors
-                nb_steps_under_water: How many consecutive steps the embodiment can survive under water
-                reset_on_hull_critical_contact: Whether a contact detected with the head should stop the episode
-        '''
+    # CHANGE: Increased motor torque to 200 to ensure the agent is physically strong enough
+    # to support its body on a single leg.
+    def __init__(self, scale, motors_torque=200, nb_steps_under_water=600, reset_on_hull_critical_contact=False):
         super(ClassicBipedalBody, self).__init__(scale, motors_torque, nb_steps_under_water)
-        self.LEG_DOWN = 3 / self.SCALE # 0 = center of hull
+        self.LEG_DOWN = 3 / self.SCALE 
         self.LEG_W, self.LEG_H = 8 / self.SCALE, 34 / self.SCALE
         self.TORQUE_PENALTY = 0.00035
         self.reset_on_hull_critical_contact = reset_on_hull_critical_contact
@@ -42,13 +33,15 @@ class ClassicBipedalBody(WalkerAbstractBody):
         self.AGENT_CENTER_HEIGHT = self.LEG_H * 2 + self.LEG_DOWN
 
     def draw(self, world, init_x, init_y, force_to_center):
+        # Reduced hull density to make the body lighter.
+        # This significantly reduces the load on the support leg, making it easier to maintain balance.
         HULL_FIXTURES = [
             fixtureDef(
                 shape=polygonShape(vertices=[(x / self.SCALE, y / self.SCALE) for x, y in polygon]),
-                density=5.0,
+                density=4.0, 
                 friction=0.1,
                 categoryBits=0x20,
-                maskBits=0x000F)  # 0.99 bouncy
+                maskBits=0x000F)
             for polygon in HULL_POLYGONS
         ]
 
@@ -64,7 +57,9 @@ class ClassicBipedalBody(WalkerAbstractBody):
             density=1.0,
             restitution=0.0,
             categoryBits=0x20,
-            maskBits=0x000F)
+            maskBits=0x000F,
+            friction=2.0
+        )
 
         hull = world.CreateDynamicBody(
             position=(init_x, init_y),
@@ -81,15 +76,17 @@ class ClassicBipedalBody(WalkerAbstractBody):
         for i in [-1, +1]:
             leg = world.CreateDynamicBody(
                 position=(init_x, init_y - self.LEG_H / 2 - self.LEG_DOWN),
-                #angle=(i * 0.05),#2°
                 fixtures=LEG_FD
             )
             leg.color1 = (0.6 - i / 10., 0.3 - i / 10., 0.5 - i / 10.)
             leg.color2 = (0.4 - i / 10., 0.2 - i / 10., 0.3 - i / 10.)
+            
+            hip_anchor_x = init_x + i * self.LEG_W / 4 
+            
             rjd = revoluteJointDef(
                 bodyA=hull,
                 bodyB=leg,
-                anchor=(init_x, init_y - self.LEG_DOWN),
+                anchor=(hip_anchor_x, init_y - self.LEG_DOWN),
                 enableMotor=True,
                 enableLimit=True,
                 maxMotorTorque=self.MOTORS_TORQUE,
@@ -107,7 +104,6 @@ class ClassicBipedalBody(WalkerAbstractBody):
 
             lower = world.CreateDynamicBody(
                 position=(init_x, init_y - self.LEG_H * 3 / 2 - self.LEG_DOWN),
-                #angle=(i * 0.05), #2°
                 fixtures=LOWER_FD
             )
             lower.color1 = (0.6 - i / 10., 0.3 - i / 10., 0.5 - i / 10.)
@@ -121,7 +117,7 @@ class ClassicBipedalBody(WalkerAbstractBody):
                 maxMotorTorque=self.MOTORS_TORQUE,
                 motorSpeed=1,
                 lowerAngle=-1.6,
-                upperAngle=-0.1,
+                upperAngle=0.0,
             )
 
             lower.userData = CustomBodyUserData(True, name="lower")
