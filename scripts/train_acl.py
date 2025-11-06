@@ -51,19 +51,15 @@ def sample_task_params(difficulty_vector: np.ndarray, dim_names: list) -> dict:
     for i, dim_name in enumerate(dim_names):
         min_val, max_val = PARAM_SPACE_MAP[dim_name]
         
-        # Interpolate the current max value for this dimension based on difficulty
         current_max = min_val + difficulty_vector[i] * (max_val - min_val)
         
-        # Sample uniformly between the easiest value and the current max
-        # For inverted params like spacing, min_val is harder, so we sample accordingly
-        if min_val > max_val: # Inverted case (e.g., creepers_spacing)
+        if min_val > max_val:
             sampled_val = np.random.uniform(low=current_max, high=min_val)
-        else: # Normal case
+        else:
             sampled_val = np.random.uniform(low=min_val, high=current_max)
         
         current_params[dim_name] = sampled_val
 
-    # Map the sampled values back to the environment's expected arguments
     input_vec = [
         current_params.get("input_vector_0", 0.0),
         current_params.get("input_vector_1", 0.0),
@@ -74,7 +70,6 @@ def sample_task_params(difficulty_vector: np.ndarray, dim_names: list) -> dict:
     if "creepers_height" in current_params: params["creepers_height"] = current_params["creepers_height"]
     if "creepers_spacing" in current_params: params["creepers_spacing"] = current_params["creepers_spacing"]
     
-    # Creepers need width if they have height
     if params.get("creepers_height", 0.0) > 0:
         params["creepers_width"] = 0.5
     else:
@@ -87,6 +82,7 @@ def evaluate_student(student_model: BaseAlgorithm, env_id: str, body_type: str,
                      difficulty_vector: np.ndarray, dim_names: list, 
                      num_episodes: int, args: argparse.Namespace, render_mode: str = None, stats_path: str = None) -> float:
     total_rewards = 0.0
+    vec_eval_env = None
     try:
         def make_eval_env(): 
             task_params = sample_task_params(difficulty_vector, dim_names)
@@ -108,7 +104,7 @@ def evaluate_student(student_model: BaseAlgorithm, env_id: str, body_type: str,
                 if done:
                     total_rewards += info[0].get('episode', {}).get('r', 0)
     finally:
-        if 'vec_eval_env' in locals() and vec_eval_env: vec_eval_env.close()
+        if vec_eval_env: vec_eval_env.close()
     return total_rewards / num_episodes
 
 
@@ -121,7 +117,6 @@ def main(args: argparse.Namespace) -> str:
     
     print(f"\n{'=' * 60}\nStarting Multi-Dimensional ACL training for '{args.env}'\n{'=' * 60}")
 
-    # --- ACL Configuration ---
     dim_names = getattr(args, 'difficulty_dims', [])
     initial_difficulty = np.array(getattr(args, 'initial_difficulty', [0.0]*len(dim_names)))
     mastery_order = getattr(args, 'mastery_order', dim_names)
@@ -138,7 +133,6 @@ def main(args: argparse.Namespace) -> str:
             print(f"Current Difficulty Vector: {np.round(difficulty_vector, 3)}")
 
             def make_env_with_replay():
-                # For replay, sample from a curriculum "box" up to the current difficulty
                 replay_difficulty = np.random.rand(len(dim_names)) * difficulty_vector
                 task_params = sample_task_params(replay_difficulty, dim_names)
                 return build_and_setup_env(args.env, args.body, task_params, args=args, **getattr(args, 'reward_shaping', {}))
@@ -155,13 +149,11 @@ def main(args: argparse.Namespace) -> str:
             if avg_reward > args.mastery_threshold:
                 print(f"Mastery achieved for focus '{mastery_order[current_focus_dim_idx]}'!")
                 
-                # Increase difficulty of the current focused dimension
                 focused_dim_name = mastery_order[current_focus_dim_idx]
                 dim_idx_in_vec = dim_names.index(focused_dim_name)
                 increment = increments[focused_dim_name]
                 difficulty_vector[dim_idx_in_vec] = min(1.0, difficulty_vector[dim_idx_in_vec] + increment)
                 
-                # If this dimension is maxed out, move to the next one
                 if difficulty_vector[dim_idx_in_vec] >= 1.0:
                     print(f"Dimension '{focused_dim_name}' maxed out.")
                     if current_focus_dim_idx < len(mastery_order) - 1:
@@ -197,7 +189,7 @@ def train_student_stage(args, stage, student_model, env_fn, output_base):
     vec_env = make_vec_env(env_fn, n_envs=n_envs, seed=getattr(args, 'seed', None))
     vec_env = VecNormalize.load(stats_path, vec_env) if os.path.exists(stats_path) else VecNormalize(vec_env)
 
-    agent_kwargs = getattr(args, 'ppo_config', {}) # Note: it's SAC config
+    agent_kwargs = getattr(args, 'ppo_config', {})
     AGENT_CLASS = SAC
 
     if stage == 1 and args.pretrained_model_path:
@@ -209,8 +201,13 @@ def train_student_stage(args, stage, student_model, env_fn, output_base):
         student.actor.load_state_dict(ppo_shared_net_weights, strict=False)
         student.critic.load_state_dict(ppo_shared_net_weights, strict=False)
         print("Weight transfer complete.")
+    # START FIX: Correctly reuse the model from the previous stage
     elif student_model:
-        student = AGENT_CLASS.load(student_model.save_path, env=vec_env, tensorboard_log=log_dir, device="auto")
+        print("Continuing training from previous stage model.")
+        student = student_model             # Re-use the existing model object
+        student.set_env(vec_env)            # Set the new vectorized environment for this stage
+        student.tensorboard_log = log_dir   # Ensure logs for this stage are saved correctly
+    # END FIX
     else:
         student = AGENT_CLASS("MlpPolicy", vec_env, verbose=0, tensorboard_log=log_dir, device="auto", **agent_kwargs)
         

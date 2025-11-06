@@ -1,5 +1,6 @@
 
 ===== .\run.py =====
+# ===== .\run.py =====
 
 import argparse
 import os
@@ -8,6 +9,7 @@ import yaml
 from types import SimpleNamespace
 import ray
 from typing import Any, Callable, Mapping
+import numpy as np
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
@@ -18,6 +20,10 @@ from scripts import evaluate as evaluate_script
 from preprocessing import convert_weight
 from scripts import check_all as check_all_script
 from utils.seeding import set_seed
+# START CHANGE: Import các thành phần cần thiết cho việc đánh giá động
+from scripts.train_acl import evaluate_student
+from stable_baselines3 import PPO
+# END CHANGE
 
 def load_config(config_path: str) -> dict:
     if not os.path.exists(config_path):
@@ -60,6 +66,53 @@ def load_and_merge_configs(base_config_path: str) -> dict:
         final_config[stage_name] = merged_stage_config
         
     return final_config
+
+# START CHANGE: Hàm helper để tính toán ngưỡng động
+def _calculate_dynamic_threshold(model_path: str, acl_config: dict, acl_args: SimpleNamespace) -> float:
+    """
+    Đánh giá mô hình PPO trên độ khó ban đầu của ACL và tính toán mastery_threshold mới.
+    """
+    settings = acl_config.get('dynamic_threshold_settings', {})
+    if not settings.get('enabled', False):
+        return acl_config['mastery_threshold'] # Trả về giá trị tĩnh nếu không bật
+
+    print_header("DYNAMIC MASTERY THRESHOLD CALCULATION")
+    print(f"Evaluating PPO model '{model_path}' on initial ACL difficulty.")
+
+    # Tải mô hình PPO
+    try:
+        ppo_model = PPO.load(model_path, device="cpu")
+    except Exception as e:
+        print(f"WARNING: Could not load PPO model for dynamic threshold calculation. Error: {e}")
+        return acl_config['mastery_threshold']
+
+    # Lấy thông số độ khó ban đầu từ cấu hình ACL
+    initial_difficulty = np.array(acl_config.get('initial_difficulty', []))
+    dim_names = acl_config.get('difficulty_dims', [])
+    
+    # Chạy đánh giá
+    baseline_reward = evaluate_student(
+        student_model=ppo_model,
+        env_id=acl_args.env,
+        body_type=acl_args.body,
+        difficulty_vector=initial_difficulty,
+        dim_names=dim_names,
+        num_episodes=5, # Đánh giá nhanh trên 5 episodes
+        args=acl_args
+    )
+    
+    print(f"PPO model baseline average reward: {baseline_reward:.2f}")
+
+    # Tính toán ngưỡng mới
+    offset = settings.get('offset', 50.0)
+    min_threshold = settings.get('min_threshold', 100.0)
+    new_threshold = max(baseline_reward + offset, min_threshold)
+    
+    print(f"Original mastery_threshold: {acl_config['mastery_threshold']}")
+    print(f"Dynamically calculated mastery_threshold: {new_threshold:.2f}")
+    
+    return new_threshold
+# END CHANGE
 
 def ray_init_and_run(func, args):
     if not ray.is_initialized():
@@ -128,6 +181,19 @@ def run_pipeline(args: SimpleNamespace):
             
         stage_args = SimpleNamespace(**final_config)
 
+        # START CHANGE: Logic tính toán threshold động cho ACL
+        if stage_name == 'ACL' and final_config.get('pretrained_model_path'):
+            dynamic_settings = final_config.get('dynamic_threshold_settings', {})
+            if dynamic_settings.get('enabled', False):
+                new_threshold = _calculate_dynamic_threshold(
+                    final_config['pretrained_model_path'],
+                    final_config, # Truyền toàn bộ cấu hình của stage
+                    stage_args
+                )
+                final_config['mastery_threshold'] = new_threshold
+                stage_args.mastery_threshold = new_threshold # Cập nhật lại args
+        # END CHANGE
+
         checkpoint_path = None
         if stage_name == 'PPO':
             checkpoint_path = run_task(train_ppo.main, stage_args, "PPO Training")
@@ -158,6 +224,7 @@ def run_pipeline(args: SimpleNamespace):
     print_header("PIPELINE COMPLETE")
 
 if __name__ == '__main__':
+    # ... phần còn lại của file giữ nguyên ...
     parser = argparse.ArgumentParser(description="Main entry point for TeachMyAgent.", formatter_class=argparse.RawTextHelpFormatter)
     subparsers = parser.add_subparsers(dest='command', required=True, help="Available commands")
 
@@ -253,12 +320,13 @@ STAGES:
     config_path: "configs/algorithms/ppo_default.yaml"
     env_config_path: "configs/environments/parkour_default.yaml"
   ACL:
-    enabled: false
+    enabled: true
     config_path: "configs/algorithms/acl_default.yaml"
     env_config_path: "configs/environments/parkour_default.yaml"
   MARL:
-    enabled: false 
+    enabled: true
     config_path: "configs/algorithms/marl_default.yaml"
+    env_config_path: "configs/environments/parkour_default.yaml"
 
 WATCH:
   enabled: false 
@@ -266,13 +334,19 @@ WATCH:
   num_episodes: 5
 
 ===== .\configs\algorithms\acl_default.yaml =====
-run_id: "acl_generalist_8h_run"
+run_id: "acl_from_ppo_5M_run"
 
-total_stages: 10
+total_stages: 2
 student_steps_per_stage: 100000 
 
 eval_episodes: 10
-mastery_threshold: 50.0 
+mastery_threshold: 100.0
+
+dynamic_threshold_settings:
+  enabled: true
+  offset: 50.0 
+  min_threshold: 120.0 
+
 n_envs: 8
 seed: 42
 
@@ -283,7 +357,7 @@ difficulty_dims:
   - creepers_height
   - creepers_spacing
 
-initial_difficulty: [0.0, 0.0, 0.0, 0.0, 1.0]
+initial_difficulty: [0.1, 0.1, 0.2, 0.1, 0.9]
 
 mastery_order:
   - input_vector_0
@@ -293,14 +367,14 @@ mastery_order:
   - creepers_spacing
 
 difficulty_increments:
-  input_vector_0: 0.2
-  input_vector_1: 0.2
+  input_vector_0: 0.1
+  input_vector_1: 0.1
   water_level: 0.1
-  creepers_height: 0.2
-  creepers_spacing: -0.1 # Giảm khoảng cách để làm khó hơn
+  creepers_height: 0.1
+  creepers_spacing: -0.05
 
 ppo_config:
-  learning_rate: 0.0003
+  learning_rate: 0.0001
   buffer_size: 500000
   batch_size: 256
   ent_coef: 'auto'
@@ -308,11 +382,11 @@ ppo_config:
   learning_starts: 10000
 
 ===== .\configs\algorithms\marl_default.yaml =====
-run_id: "marl_interactive_8h_run"
+run_id: "marl_interactive_from_ppo_5M_run"
 mode: "interactive"
 n_agents: 2
 
-iterations: 100
+iterations: 2
 num_workers: 3
 num_gpus: 2
 
@@ -325,38 +399,34 @@ use_tune: false
 ppo_config:
   training:
     gamma: 0.99
-    lr: 0.0003
+    lr: 0.00005
     lambda_: 0.95
     clip_param: 0.2
     entropy_coeff: 0.01
-    train_batch_size: 16384 
+    train_batch_size: 32768
   
   model:
-    fcnet_hiddens: [128, 128] 
+    fcnet_hiddens: [256, 256] 
     fcnet_activation: "tanh"
     
   env_runners:
     rollout_fragment_length: 1024
 
 ===== .\configs\algorithms\ppo_default.yaml =====
-run_id: "ppo_base_8h_run"
-total_timesteps: 1000000 
-save_freq: 250000
+run_id: "ppo_base_5M_run"
+total_timesteps: 100000
+save_freq: 50000
 
 n_envs: 8
 seed: 42
 
-# CHANGE 2: Increased penalties/bonuses related to stability.
-# This encourages the agent to keep its body high and legs straight, which is crucial for the support leg.
 reward_shaping:
   progress_multiplier: 400.0
   velocity_multiplier: 2.0
   torque_penalty_multiplier: 2.0
   body_angle_penalty: 1.0
-  low_hull_penalty: 1.5          # <--- TĂNG HÌNH PHẠT KHI THÂN BỊ THẤP
-  standing_bonus_multiplier: 2.0 # <--- TĂNG THƯỞNG KHI DUỖI THẲNG GỐI
-
-  # New bonuses to guide the agent
+  low_hull_penalty: 1.5
+  standing_bonus_multiplier: 2.0
   foot_air_time_bonus: 0.2
   gait_bonus: 0.2
 
@@ -364,7 +434,7 @@ ppo_config:
   gamma: 0.995
   n_steps: 8192
   ent_coef: 0.005
-  learning_rate: 0.00005 # <--- GIẢM TỪ 0.0001 (5e-5)
+  learning_rate: 0.00005
   n_epochs: 10
   batch_size: 256
   clip_range: 0.2
@@ -1094,6 +1164,7 @@ if __name__ == '__main__':
 
 
 ===== .\scripts\test_suite.py =====
+# ===== .\scripts\test_suite.py =====
 import argparse
 import os
 import sys
@@ -1106,10 +1177,10 @@ import time
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from TeachMyAgent.environments.envs.bodies.BodiesEnum import BodiesEnum
-from utils.env_utils import build_and_setup_env, setup_render_window # Import setup_render_window
+from utils.env_utils import build_and_setup_env, setup_render_window 
 from preprocessing import convert_weight
-from scripts import train_ppo, train_acl
-from run import ray_init_and_run
+from scripts import train_ppo, train_acl, train_marl
+from run import ray_init_and_run, _calculate_dynamic_threshold, load_config
 
 def print_header(text, char='='):
     width = 80
@@ -1120,10 +1191,8 @@ def print_header(text, char='='):
 def run_test(func, test_name, args_namespace=None):
     print_header(f"RUNNING TEST: {test_name.upper()}", char='-')
     try:
-        if args_namespace:
-            result = func(args_namespace)
-        else:
-            result = func()
+        is_no_args_func = 'args_namespace' not in func.__code__.co_varnames and func.__code__.co_argcount == 0
+        result = func() if is_no_args_func else func(args_namespace)
         print(f"✅ SUCCESS: {test_name} completed.")
         return result, True
     except Exception:
@@ -1132,7 +1201,7 @@ def run_test(func, test_name, args_namespace=None):
         traceback.print_exc()
         return None, False
 
-# --- Test Functions ---
+# --- Các hàm test sanity (giữ nguyên) ---
 def test_body_creation():
     """Attempts to instantiate every body in BodiesEnum."""
     print("Testing instantiation of all agent bodies...")
@@ -1155,11 +1224,15 @@ def test_body_creation():
 def test_env_parameterization():
     """Tests if the parkour environment can be parameterized correctly."""
     print("Testing parkour environment parameterization...")
-    env_args = SimpleNamespace(horizon=100)
-    build_and_setup_env('parkour', 'classic_bipedal', {}, args=env_args).close()
+    env_config_path = os.path.join(os.path.dirname(__file__), '..', 'configs', 'environments', 'parkour_default.yaml')
+    env_config = load_config(env_config_path)
+    env_args = SimpleNamespace(**env_config, **env_config.get('env_params', {}))
+    env_args.horizon = 100
+
+    build_and_setup_env(env_args.env, env_args.body, {}, args=env_args).close()
     
     custom_params = {"input_vector": np.array([0.1, -0.2, 0.3]), "water_level": 0.5, "creepers_height": 0.0}
-    env = build_and_setup_env('parkour', 'classic_bipedal', custom_params, args=env_args)
+    env = build_and_setup_env(env_args.env, env_args.body, custom_params, args=env_args)
     assert env.unwrapped.creepers_height == 0.0, "Creeper height not set correctly"
     env.close()
     
@@ -1169,8 +1242,12 @@ def test_env_parameterization():
 def test_reward_function_sanity():
     """Runs a few steps and checks if the reward is a valid float."""
     print("Running reward function sanity check...")
-    env_args = SimpleNamespace(horizon=100)
-    env = build_and_setup_env('parkour', 'classic_bipedal', {}, args=env_args)
+    env_config_path = os.path.join(os.path.dirname(__file__), '..', 'configs', 'environments', 'parkour_default.yaml')
+    env_config = load_config(env_config_path)
+    env_args = SimpleNamespace(**env_config, **env_config.get('env_params', {}))
+    env_args.horizon = 100
+
+    env = build_and_setup_env(env_args.env, env_args.body, {}, args=env_args)
     env.reset()
     for _ in range(5):
         action = env.action_space.sample()
@@ -1181,7 +1258,6 @@ def test_reward_function_sanity():
     print("Reward function returns valid float values.")
     return True
 
-# START CHANGE: Updated rendering test to be more interactive and support fullscreen
 def test_rendering_popup(args):
     """
     Tests if the rendering window can open, run with random actions, and close.
@@ -1189,16 +1265,19 @@ def test_rendering_popup(args):
     print("Testing rendering window popup...")
     env = None
     try:
-        # Use args from the test_suite command to control rendering
+        env_config_path = os.path.join(os.path.dirname(__file__), '..', 'configs', 'environments', 'parkour_default.yaml')
+        env_config = load_config(env_config_path)
+
         render_args = SimpleNamespace(
             fullscreen=args.render_fullscreen, 
-            width=None if args.render_fullscreen else 800, # Use a larger default window
-            height=None if args.render_fullscreen else 600,
-            horizon=200 # Run for a bit longer
+            width=None if args.render_fullscreen else 800, 
+            height=None if args.render_fullscreen else 600
         )
-        env = build_and_setup_env('parkour', 'classic_bipedal', {}, render_mode="human", args=render_args)
         
-        # Use the utility to setup window size correctly
+        env_render_args = SimpleNamespace(**env_config, **env_config.get('env_params', {}), **vars(render_args))
+        env_render_args.horizon = 200
+        
+        env = build_and_setup_env(env_render_args.env, env_render_args.body, {}, render_mode="human", args=env_render_args)
         setup_render_window(env, render_args)
 
         env.reset()
@@ -1207,18 +1286,15 @@ def test_rendering_popup(args):
         else:
             print(f"  - A {render_args.width}x{render_args.height} window should appear for ~4 seconds...")
         
-        for i in range(render_args.horizon):
-            # Take a random action
+        for i in range(200):
             action = env.action_space.sample()
             env.step(action)
-            
-            # Render the environment
             env.render()
             
             if env.unwrapped.viewer and env.unwrapped.viewer.window and env.unwrapped.viewer.window.has_exit:
                 print("  - Window closed by user during test.")
                 break
-            time.sleep(1.0 / 50.0) # Limit to 50 FPS
+            time.sleep(1.0 / 50.0) 
         
         print("  - Rendering test loop completed without crashing.")
         return True
@@ -1226,16 +1302,53 @@ def test_rendering_popup(args):
         if env:
             env.close()
             print("  - Environment and rendering window closed successfully.")
-# END CHANGE
+
+def test_dynamic_threshold_calculation(ppo_model_path: str, acl_config: dict):
+    """
+    Tests the logic for calculating a dynamic mastery threshold for ACL.
+    Returns the calculated threshold.
+    """
+    print("Testing dynamic mastery threshold calculation logic...")
+    
+    acl_args_dict = acl_config.copy()
+    acl_args_dict['render'] = False
+    acl_args = SimpleNamespace(**acl_args_dict)
+
+    calculated_threshold = _calculate_dynamic_threshold(
+        model_path=ppo_model_path,
+        acl_config=acl_config,
+        acl_args=acl_args
+    )
+
+    assert isinstance(calculated_threshold, float), f"Threshold should be a float, but got {type(calculated_threshold)}"
+    
+    dynamic_settings = acl_config.get('dynamic_threshold_settings', {})
+    if dynamic_settings.get('enabled', False):
+        min_threshold = dynamic_settings.get('min_threshold', 0.0)
+        assert calculated_threshold >= min_threshold, \
+            f"Calculated threshold {calculated_threshold} is below the minimum {min_threshold}"
+    
+    print(f"Dynamic threshold calculated successfully: {calculated_threshold:.2f}")
+    return calculated_threshold
 
 def main(args): 
     print_header("STARTING EXPANDED PROJECT TEST SUITE")
     failed_tests = []
     
+    config_dir = os.path.join(os.path.dirname(__file__), '..', 'configs')
+    env_config_path = os.path.join(config_dir, 'environments', 'parkour_default.yaml')
+    ppo_config_path = os.path.join(config_dir, 'algorithms', 'ppo_default.yaml')
+    acl_config_path = os.path.join(config_dir, 'algorithms', 'acl_default.yaml')
+    marl_config_path = os.path.join(config_dir, 'algorithms', 'marl_default.yaml')
+    
+    env_config = load_config(env_config_path)
+    ppo_config = {**env_config, **load_config(ppo_config_path), **env_config.get('env_params', {})}
+    acl_config = {**env_config, **load_config(acl_config_path), **env_config.get('env_params', {})}
+    marl_config = {**env_config, **load_config(marl_config_path), **env_config.get('env_params', {})}
+
     print_header("GROUP 1: SANITY CHECKS", char='*')
     
     if args.test_render:
-        # Pass the args object to the test function
         _, success = run_test(lambda: test_rendering_popup(args), "Rendering Window Popup")
         if not success: failed_tests.append("Rendering Window Popup")
     else:
@@ -1258,27 +1371,60 @@ def main(args):
     ppo_model_path = None
     
     if not failed_tests:
-        ppo_args = SimpleNamespace(
-            env='parkour', body='classic_bipedal', run_id="test_suite_ppo",
-            total_timesteps=512, n_envs=2, save_freq=1024, seed=42, horizon=256,
-            reward_shaping={'progress_multiplier': 1.0}, ppo_config={'n_steps': 128},
-            render=False 
-        )
+        ppo_test_config = ppo_config.copy()
+        # GHI ĐÈ các tham số step để test nhanh
+        ppo_test_config['total_timesteps'] = 512
+        ppo_test_config['n_envs'] = 2 # Giảm số env để test nhanh hơn
+        if 'ppo_config' in ppo_test_config:
+            ppo_test_config['ppo_config']['n_steps'] = 128 # BẮT BUỘC: n_steps * n_envs <= total_timesteps
+        
+        ppo_test_config['run_id'] = "test_suite_ppo"
+        ppo_test_config['render'] = False
+        ppo_args = SimpleNamespace(**ppo_test_config)
+        
         ppo_model_path, success = run_test(train_ppo.main, "PPO Micro-Training", args_namespace=ppo_args)
         if not success: failed_tests.append("PPO Micro-Training")
-
+    
+    dynamic_threshold = None
     if ppo_model_path and not failed_tests:
-        acl_args = SimpleNamespace(
-            env='parkour', body='classic_bipedal', run_id="test_suite_acl",
-            total_stages=1, student_steps_per_stage=256, n_envs=2,
-            pretrained_model_path=ppo_model_path, mastery_threshold=1000,
-            eval_episodes=1, horizon=128, seed=42,
-            difficulty_dims=['water_level'], initial_difficulty=[0.1], mastery_order=['water_level'],
-            difficulty_increments={'water_level': 0.1},
-            render=False
-        )
+        dynamic_threshold, success = run_test(lambda: test_dynamic_threshold_calculation(ppo_model_path, acl_config), "Dynamic Threshold Calculation")
+        if not success: failed_tests.append("Dynamic Threshold Calculation")
+
+    if ppo_model_path and dynamic_threshold is not None and not failed_tests:
+        acl_test_config = acl_config.copy()
+        acl_test_config['total_stages'] = 1
+        acl_test_config['student_steps_per_stage'] = 256
+        acl_test_config['n_envs'] = 2 # Giảm số env để test nhanh hơn
+        
+        acl_test_config['run_id'] = "test_suite_acl"
+        acl_test_config['pretrained_model_path'] = ppo_model_path
+        acl_test_config['mastery_threshold'] = dynamic_threshold
+        acl_test_config['render'] = False
+
+        acl_args = SimpleNamespace(**acl_test_config)
+        
         _, success = run_test(train_acl.main, "ACL Micro-Training (with Transfer)", args_namespace=acl_args)
         if not success: failed_tests.append("ACL Micro-Training")
+    
+    if not failed_tests:
+        marl_test_config = marl_config.copy()
+        marl_test_config['iterations'] = 2
+        marl_test_config['run_id'] = "test_suite_marl"
+        marl_test_config['num_workers'] = 0 
+        marl_test_config['num_gpus'] = 0
+
+        # START CHANGE: Ghi đè các tham số step của thuật toán MARL
+        if 'ppo_config' in marl_test_config:
+            marl_test_config['ppo_config']['training']['train_batch_size'] = 256
+            if 'env_runners' in marl_test_config['ppo_config']:
+                 marl_test_config['ppo_config']['env_runners']['rollout_fragment_length'] = 128
+        # END CHANGE
+        
+        marl_args = SimpleNamespace(**marl_test_config)
+
+        _, success = run_test(lambda: ray_init_and_run(train_marl.main, marl_args), "MARL Micro-Training")
+        if not success:
+            failed_tests.append("MARL Micro-Training")
     
     print_header("TEST SUITE SUMMARY")
     if not failed_tests:
@@ -1342,19 +1488,15 @@ def sample_task_params(difficulty_vector: np.ndarray, dim_names: list) -> dict:
     for i, dim_name in enumerate(dim_names):
         min_val, max_val = PARAM_SPACE_MAP[dim_name]
         
-        # Interpolate the current max value for this dimension based on difficulty
         current_max = min_val + difficulty_vector[i] * (max_val - min_val)
         
-        # Sample uniformly between the easiest value and the current max
-        # For inverted params like spacing, min_val is harder, so we sample accordingly
-        if min_val > max_val: # Inverted case (e.g., creepers_spacing)
+        if min_val > max_val:
             sampled_val = np.random.uniform(low=current_max, high=min_val)
-        else: # Normal case
+        else:
             sampled_val = np.random.uniform(low=min_val, high=current_max)
         
         current_params[dim_name] = sampled_val
 
-    # Map the sampled values back to the environment's expected arguments
     input_vec = [
         current_params.get("input_vector_0", 0.0),
         current_params.get("input_vector_1", 0.0),
@@ -1365,7 +1507,6 @@ def sample_task_params(difficulty_vector: np.ndarray, dim_names: list) -> dict:
     if "creepers_height" in current_params: params["creepers_height"] = current_params["creepers_height"]
     if "creepers_spacing" in current_params: params["creepers_spacing"] = current_params["creepers_spacing"]
     
-    # Creepers need width if they have height
     if params.get("creepers_height", 0.0) > 0:
         params["creepers_width"] = 0.5
     else:
@@ -1378,6 +1519,7 @@ def evaluate_student(student_model: BaseAlgorithm, env_id: str, body_type: str,
                      difficulty_vector: np.ndarray, dim_names: list, 
                      num_episodes: int, args: argparse.Namespace, render_mode: str = None, stats_path: str = None) -> float:
     total_rewards = 0.0
+    vec_eval_env = None
     try:
         def make_eval_env(): 
             task_params = sample_task_params(difficulty_vector, dim_names)
@@ -1399,7 +1541,7 @@ def evaluate_student(student_model: BaseAlgorithm, env_id: str, body_type: str,
                 if done:
                     total_rewards += info[0].get('episode', {}).get('r', 0)
     finally:
-        if 'vec_eval_env' in locals() and vec_eval_env: vec_eval_env.close()
+        if vec_eval_env: vec_eval_env.close()
     return total_rewards / num_episodes
 
 
@@ -1412,7 +1554,6 @@ def main(args: argparse.Namespace) -> str:
     
     print(f"\n{'=' * 60}\nStarting Multi-Dimensional ACL training for '{args.env}'\n{'=' * 60}")
 
-    # --- ACL Configuration ---
     dim_names = getattr(args, 'difficulty_dims', [])
     initial_difficulty = np.array(getattr(args, 'initial_difficulty', [0.0]*len(dim_names)))
     mastery_order = getattr(args, 'mastery_order', dim_names)
@@ -1429,7 +1570,6 @@ def main(args: argparse.Namespace) -> str:
             print(f"Current Difficulty Vector: {np.round(difficulty_vector, 3)}")
 
             def make_env_with_replay():
-                # For replay, sample from a curriculum "box" up to the current difficulty
                 replay_difficulty = np.random.rand(len(dim_names)) * difficulty_vector
                 task_params = sample_task_params(replay_difficulty, dim_names)
                 return build_and_setup_env(args.env, args.body, task_params, args=args, **getattr(args, 'reward_shaping', {}))
@@ -1446,13 +1586,11 @@ def main(args: argparse.Namespace) -> str:
             if avg_reward > args.mastery_threshold:
                 print(f"Mastery achieved for focus '{mastery_order[current_focus_dim_idx]}'!")
                 
-                # Increase difficulty of the current focused dimension
                 focused_dim_name = mastery_order[current_focus_dim_idx]
                 dim_idx_in_vec = dim_names.index(focused_dim_name)
                 increment = increments[focused_dim_name]
                 difficulty_vector[dim_idx_in_vec] = min(1.0, difficulty_vector[dim_idx_in_vec] + increment)
                 
-                # If this dimension is maxed out, move to the next one
                 if difficulty_vector[dim_idx_in_vec] >= 1.0:
                     print(f"Dimension '{focused_dim_name}' maxed out.")
                     if current_focus_dim_idx < len(mastery_order) - 1:
@@ -1488,7 +1626,7 @@ def train_student_stage(args, stage, student_model, env_fn, output_base):
     vec_env = make_vec_env(env_fn, n_envs=n_envs, seed=getattr(args, 'seed', None))
     vec_env = VecNormalize.load(stats_path, vec_env) if os.path.exists(stats_path) else VecNormalize(vec_env)
 
-    agent_kwargs = getattr(args, 'ppo_config', {}) # Note: it's SAC config
+    agent_kwargs = getattr(args, 'ppo_config', {})
     AGENT_CLASS = SAC
 
     if stage == 1 and args.pretrained_model_path:
@@ -1500,8 +1638,13 @@ def train_student_stage(args, stage, student_model, env_fn, output_base):
         student.actor.load_state_dict(ppo_shared_net_weights, strict=False)
         student.critic.load_state_dict(ppo_shared_net_weights, strict=False)
         print("Weight transfer complete.")
+    # START FIX: Correctly reuse the model from the previous stage
     elif student_model:
-        student = AGENT_CLASS.load(student_model.save_path, env=vec_env, tensorboard_log=log_dir, device="auto")
+        print("Continuing training from previous stage model.")
+        student = student_model             # Re-use the existing model object
+        student.set_env(vec_env)            # Set the new vectorized environment for this stage
+        student.tensorboard_log = log_dir   # Ensure logs for this stage are saved correctly
+    # END FIX
     else:
         student = AGENT_CLASS("MlpPolicy", vec_env, verbose=0, tensorboard_log=log_dir, device="auto", **agent_kwargs)
         
@@ -1519,9 +1662,10 @@ def train_student_stage(args, stage, student_model, env_fn, output_base):
 import argparse
 import os
 import sys
+import time
+import ray
 from collections.abc import Mapping
 from typing import Optional
-import ray
 from ray import tune, air
 from ray.rllib.algorithms.ppo import PPOConfig
 from ray.rllib.policy.policy import PolicySpec
@@ -1529,18 +1673,21 @@ from ray.tune.registry import register_env
 from gymnasium.wrappers import TransformObservation
 import numpy as np
 import gymnasium as gym
+import TeachMyAgent.environments
+
+
+from ray.rllib.utils.metrics import (
+    ENV_RUNNER_RESULTS,
+    EPISODE_RETURN_MEAN,
+    LEARNER_RESULTS,
+    ALL_MODULES,
+)
 
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import TeachMyAgent.environments
 from TeachMyAgent.environments.envs.multi_agent_parametric_parkour import MultiAgentParkour
 from TeachMyAgent.environments.envs.interactive_multi_agent_parkour import InteractiveMultiAgentParkour
-
-# START FIX: Add the missing print_header function
-def print_header(title: str):
-    width = 80
-    print("\n\n" + "#"*width + f"\n##{title:^76}##\n" + "#"*width)
-# END FIX
 
 def add_marl_args(parser: argparse.ArgumentParser) -> argparse.ArgumentParser:
     parser.add_argument("--mode", type=str, default="interactive", choices=["cooperative", "interactive"], help="Environment mode.")
@@ -1549,6 +1696,10 @@ def add_marl_args(parser: argparse.ArgumentParser) -> argparse.ArgumentParser:
     parser.add_argument("--iterations", type=int, default=100, help="Number of training iterations.")
     parser.add_argument("--num-workers", type=int, default=2, help="Number of Ray rollout workers.")
     parser.add_argument("--num-gpus", type=float, default=0, help="Number of GPUs to use for training.")
+    parser.add_argument("--check-env", action="store_true", help="Run a random environment check.")
+    parser.add_argument("--width", type=int, help="Render window width.")
+    parser.add_argument("--height", type=int, help="Render window height.")
+    parser.add_argument("--fullscreen", action="store_true", help="Render in fullscreen.")
     parser.add_argument("--run_id", type=str, default="marl_run1", help="Identifier for the training run.")
     parser.add_argument("--use-tune", action="store_true", help="Use Ray Tune for hyperparameter tuning.")
     parser.add_argument('--horizon', type=int, default=3000, help="Max steps per episode.")
@@ -1593,7 +1744,6 @@ def get_env_creator(mode):
     if mode == "cooperative": base_env_creator_func = lambda config: MultiAgentParkour(config=config)
     elif mode == "interactive": base_env_creator_func = lambda config: InteractiveMultiAgentParkour(config=config)
     else: raise ValueError(f"Invalid mode: '{mode}'.")
-    
     def wrapped_env_creator(config):
         base_env = base_env_creator_func(config)
         def clip_multi_agent_obs(obs_dict):
@@ -1607,15 +1757,17 @@ def get_env_creator(mode):
         return TransformObservation(base_env, clip_multi_agent_obs, clipped_observation_space)
     return wrapped_env_creator
 
-
 def main(args: argparse.Namespace) -> Optional[str]:
+    if hasattr(args, 'check_env') and args.check_env: return
+
+    if not hasattr(args, 'horizon'): args.horizon = 3000
+
     env_name = f"marl-{args.mode}-v0"
     register_env(env_name, get_env_creator(args.mode))
     env_config = {"n_agents": args.n_agents, "agent_body_type": args.body, "horizon": args.horizon, "reward_type": args.reward_type}
     
-    temp_env = get_env_creator(args.mode)(env_config)
-    obs_space, act_space = temp_env.observation_space["agent_0"], temp_env.action_space["agent_0"]
-    temp_env.close()
+    with get_env_creator(args.mode)(env_config) as temp_env:
+        obs_space, act_space = temp_env.observation_space["agent_0"], temp_env.action_space["agent_0"]
 
     ppo_config_dict = getattr(args, 'ppo_config', {}); training_config = ppo_config_dict.get('training', {})
     model_config = ppo_config_dict.get('model', {}); env_runners_config = ppo_config_dict.get('env_runners', {})
@@ -1625,89 +1777,75 @@ def main(args: argparse.Namespace) -> Optional[str]:
         .rl_module(model_config=model_config).resources(num_gpus=args.num_gpus))
 
     if hasattr(args, 'shared_policy') and args.shared_policy:
+        print("Using Parameter Sharing.")
         config.multi_agent(policies={"shared_policy": PolicySpec(observation_space=obs_space, action_space=act_space)},
                            policy_mapping_fn=lambda agent_id, *a, **kw: "shared_policy")
     else:
+        print("Using Independent Learning.")
         config.multi_agent(policies={f"agent_{i}": PolicySpec(observation_space=obs_space, action_space=act_space) for i in range(args.n_agents)},
                            policy_mapping_fn=lambda agent_id, *a, **kw: agent_id)
 
     if hasattr(args, 'use_cc') and args.use_cc:
+        print("Activating Centralized Critic.")
         config.update_from_dict({"use_centralized_value_function": True})
 
     use_tune = getattr(args, 'use_tune', False)
-    output_dir = os.path.abspath(os.path.join("output", "marl", args.run_id))
 
     if use_tune:
-        print_header("STARTING RAY TUNE HYPERPARAMETER SEARCH")
-        tune_config = getattr(args, 'tune_config', {})
-        search_space = _parse_search_space(tune_config.get('search_space', {}))
+        print("Starting MARL training with Ray Tune...")
+        tune_config = getattr(args, 'tune_config', {}); search_space_config = tune_config.get('search_space', {})
+        run_config_dict = tune_config.get('run_config', {})
+        if 'stop' not in run_config_dict: raise ValueError("`stop` criteria must be defined in `tune_config.run_config` when `use_tune` is true.")
         
-        # Merge search space into the main config
-        config_dict = config.to_dict()
-        final_search_space = deep_update(config_dict, search_space)
-
-        # Configure stopper
-        stopper_config = tune_config.get('stopper', {})
-        stopper = ray.tune.stopper.ExperimentPlateauStopper(
-            metric=stopper_config.get("metric", "episode_reward_mean"),
-            std=stopper_config.get("std", 0.01),
-            patience=stopper_config.get("patience", 10),
-            top=stopper_config.get("top", 10),
-            mode=stopper_config.get("mode", "max")
-        )
-
-        run_config = air.RunConfig(
-            name=args.run_id,
-            stop=stopper,
-            local_dir=os.path.dirname(output_dir),
-            checkpoint_config=air.CheckpointConfig(
-                num_to_keep=3,
-                checkpoint_score_attribute="episode_reward_mean",
-                checkpoint_score_order="max"
-            ),
-        )
-
-        tuner = tune.Tuner(
-            "PPO",
-            param_space=final_search_space,
-            run_config=run_config,
-            tune_config=tune.TuneConfig(
-                num_samples=tune_config.get("num_samples", 10),
-                metric="episode_reward_mean",
-                mode="max",
-            ),
-        )
+        param_space = config.to_dict(); deep_update(param_space, _parse_search_space(search_space_config))
         
+        checkpoint_config_dict = run_config_dict.get('checkpoint_config', {}); checkpoint_config_dict.setdefault('num_to_keep', 1)
+        checkpoint_config_dict.setdefault('checkpoint_score_attribute', f"{ENV_RUNNER_RESULTS}/{EPISODE_RETURN_MEAN}"); checkpoint_config_dict.setdefault('checkpoint_score_order', 'max')
+        
+        storage_path = os.path.abspath(os.path.join("output", "marl")); run_name = run_config_dict.get('name', args.run_id)
+        print(f"Checkpoints will be saved to: {os.path.join(storage_path, run_name)}")
+
+        run_config = air.RunConfig(name=run_name, stop=run_config_dict['stop'], verbose=run_config_dict.get('verbose', 2),
+                                   checkpoint_config=air.CheckpointConfig(**checkpoint_config_dict), storage_path=storage_path)
+
+        tuner = tune.Tuner("PPO", param_space=param_space, run_config=run_config, tune_config=tune.TuneConfig(trial_dirname_creator=lambda t: t.trial_id))
         results = tuner.fit()
-        best_result = results.get_best_result()
-        best_checkpoint_path = best_result.checkpoint.path
-        print(f"\nTune complete. Best checkpoint saved at: {best_checkpoint_path}")
-        print(f"Best hyperparameters found: {best_result.config}")
-        return best_checkpoint_path
-
-    else:
-        print_header(f"STARTING SINGLE MARL RUN ({args.iterations} ITERATIONS)")
-        algo = config.build()
+        best_result = results.get_best_result(metric=f"{ENV_RUNNER_RESULTS}/{EPISODE_RETURN_MEAN}", mode="max")
+        best_checkpoint_path = best_result.checkpoint.path if best_result and best_result.checkpoint else None
         
-        os.makedirs(output_dir, exist_ok=True)
+        print("\n" + "="*60 + "\nRay Tune finished!")
+        if best_result:
+            print(f"Best trial final reward: {best_result.metrics.get(ENV_RUNNER_RESULTS, {}).get(EPISODE_RETURN_MEAN, 'N/A')}")
+            print(f"Best trial config: {best_result.config}\nBest checkpoint saved at: {best_checkpoint_path}")
+        else: print("No trials completed successfully.")
+        print("="*60)
+        return best_checkpoint_path
+    else:
+        print(f"Starting a single MARL training run for {args.iterations} iterations...")
+        algo = config.build()
+        output_dir = os.path.abspath(os.path.join("output", "marl", args.run_id)); os.makedirs(output_dir, exist_ok=True)
         print(f"Checkpoints will be saved to: {output_dir}")
-        print(f"TensorBoard logs: {algo.logdir}")
+        print(f"TensorBoard logs will be saved under: {algo.logdir}")
 
-        best_reward, best_checkpoint_path = -float('inf'), None
+        best_reward, checkpoint_path_to_return = -float('inf'), None
         for i in range(args.iterations):
             result = algo.train()
-            reward_mean = result.get("episode_reward_mean", float('nan'))
+            env_runner_results, learner_results = result.get(ENV_RUNNER_RESULTS, {}), result.get(LEARNER_RESULTS, {})
+            episode_reward_mean = env_runner_results.get(EPISODE_RETURN_MEAN, float("nan"))
             
-            if reward_mean > best_reward:
-                best_reward = reward_mean
+            if episode_reward_mean > best_reward:
+                best_reward = episode_reward_mean
                 checkpoint_result = algo.save(checkpoint_dir=output_dir)
-                best_checkpoint_path = checkpoint_result.checkpoint.path
-                print(f"\nNew best avg reward: {best_reward:.2f}. Checkpoint: {best_checkpoint_path}")
+                checkpoint_path_to_return = checkpoint_result.checkpoint.path
+                print(f"\nNew best average reward: {best_reward:.2f}. Checkpoint saved at: {checkpoint_path_to_return}")
             
-            print(f"Iter {i+1}/{args.iterations}: Mean Reward: {reward_mean:.2f}")
+            per_policy_rewards = env_runner_results.get("module_episode_returns_mean", {})
+            total_loss_per_module = {mid: stats.get("total_loss", float("nan")) for mid, stats in learner_results.items() if mid != ALL_MODULES}
+            
+            print(f"Iter {i + 1}/{args.iterations}: Mean Reward: {episode_reward_mean:.2f}, Policy Rewards: {per_policy_rewards}, Module Loss: {total_loss_per_module}")
         
-        print(f"\nTraining complete. Best checkpoint at: {best_checkpoint_path}")
-        return best_checkpoint_path
+        print(f"\nTraining complete. Best checkpoint saved at: {checkpoint_path_to_return}")
+        return checkpoint_path_to_return
 
 ===== .\scripts\train_ppo.py =====
 # scripts/train_ppo.py
@@ -7499,13 +7637,103 @@ def add_render_args(parser):
             parkour_default.yaml
     output/
         acl/
+            acl_from_ppo_5M_run/
+                student_final.zip
+                vecnormalize.pkl
+                logs/
+                    SAC_0/
+                        events.out.tfevents.1762395914.HoangNam.9296.1
+                        events.out.tfevents.1762396262.HoangNam.7080.1
+                        events.out.tfevents.1762396393.HoangNam.7080.2
+                        events.out.tfevents.1762397036.HoangNam.9968.1
+                        events.out.tfevents.1762397191.HoangNam.9968.2
+                        events.out.tfevents.1762397822.HoangNam.21328.1
+                        events.out.tfevents.1762397992.HoangNam.21328.2
+                        events.out.tfevents.1762398503.HoangNam.15812.1
+                        events.out.tfevents.1762398693.HoangNam.15812.2
+                        events.out.tfevents.1762399109.HoangNam.9564.1
+                        events.out.tfevents.1762399290.HoangNam.9564.2
+                        events.out.tfevents.1762404314.HoangNam.19824.1
+                        events.out.tfevents.1762404622.HoangNam.19824.2
+                models/
+                    student_stage_2.zip
             acl_generalist_8h_run/
                 student_final.zip
                 vecnormalize.pkl
                 logs/
                     SAC_0/
                         events.out.tfevents.1762294139.151b7de8ab89.1038.1
+            test_suite_acl/
+                student_final.zip
+                vecnormalize.pkl
+                logs/
+                    SAC_0/
+                        events.out.tfevents.1762367387.HoangNam.21076.1
+                        events.out.tfevents.1762367418.HoangNam.11792.1
+                        events.out.tfevents.1762367792.HoangNam.21356.1
+                        events.out.tfevents.1762367894.HoangNam.2468.1
+                        events.out.tfevents.1762368056.HoangNam.788.1
+                        events.out.tfevents.1762368164.HoangNam.7508.1
+                        events.out.tfevents.1762368268.HoangNam.20052.1
+                        events.out.tfevents.1762368366.HoangNam.13404.1
+                        events.out.tfevents.1762368471.HoangNam.20676.1
+                        events.out.tfevents.1762368974.HoangNam.11776.1
+                        events.out.tfevents.1762369136.HoangNam.15632.1
+                        events.out.tfevents.1762369316.HoangNam.17148.1
+                        events.out.tfevents.1762394559.HoangNam.2956.1
+                        events.out.tfevents.1762394930.HoangNam.16428.1
+                        events.out.tfevents.1762395126.HoangNam.18204.1
+                        events.out.tfevents.1762395675.HoangNam.16248.1
+                models/
+                    student_stage_1.zip
+            test_suite_pipeline_acl/
+                student_final.zip
+                vecnormalize.pkl
+                logs/
+                    SAC_0/
+                        events.out.tfevents.1762366620.HoangNam.1592.1
+                        events.out.tfevents.1762366791.HoangNam.12800.1
+                        events.out.tfevents.1762366791.HoangNam.12800.2
+                        events.out.tfevents.1762366966.HoangNam.19132.1
+                        events.out.tfevents.1762366967.HoangNam.19132.2
+                        events.out.tfevents.1762367023.HoangNam.3196.1
+                        events.out.tfevents.1762367024.HoangNam.3196.2
+                        events.out.tfevents.1762367209.HoangNam.5392.1
+                        events.out.tfevents.1762367210.HoangNam.5392.2
+                        events.out.tfevents.1762367339.HoangNam.1760.1
+                        events.out.tfevents.1762367340.HoangNam.1760.2
+                models/
+                    student_stage_2.zip
+        marl/
+            marl_interactive_from_ppo_5M_run/
+            test_suite_marl/
+            test_suite_pipeline_marl/
         ppo/
+            ppo_base_5M_run/
+                vecnormalize.pkl
+                logs/
+                    PPO_1/
+                        events.out.tfevents.1762395763.HoangNam.17468.0
+                    PPO_2/
+                        events.out.tfevents.1762395864.HoangNam.9296.0
+                    PPO_3/
+                        events.out.tfevents.1762396212.HoangNam.7080.0
+                    PPO_4/
+                        events.out.tfevents.1762396981.HoangNam.9968.0
+                    PPO_5/
+                        events.out.tfevents.1762397748.HoangNam.20532.0
+                    PPO_6/
+                        events.out.tfevents.1762397773.HoangNam.21328.0
+                    PPO_7/
+                        events.out.tfevents.1762398444.HoangNam.15812.0
+                    PPO_8/
+                        events.out.tfevents.1762399054.HoangNam.9564.0
+                    PPO_9/
+                        events.out.tfevents.1762404229.HoangNam.19824.0
+                models/
+                    ppo_model_100000_steps.zip
+                    ppo_model_50000_steps.zip
+                    ppo_model_final.zip
             ppo_base_8h_run/
                 vecnormalize.pkl
                 logs/
@@ -7558,6 +7786,60 @@ def add_render_args(parser):
                     ppo_model_250000_steps.zip
                     ppo_model_500000_steps.zip
                     ppo_model_750000_steps.zip
+                    ppo_model_final.zip
+            test_suite_pipeline_ppo/
+                vecnormalize.pkl
+                logs/
+                    PPO_1/
+                        events.out.tfevents.1762366620.HoangNam.1592.0
+                    PPO_2/
+                        events.out.tfevents.1762366790.HoangNam.12800.0
+                    PPO_3/
+                        events.out.tfevents.1762366965.HoangNam.19132.0
+                    PPO_4/
+                        events.out.tfevents.1762367022.HoangNam.3196.0
+                    PPO_5/
+                        events.out.tfevents.1762367209.HoangNam.5392.0
+                    PPO_6/
+                        events.out.tfevents.1762367339.HoangNam.1760.0
+                models/
+                    ppo_model_final.zip
+            test_suite_ppo/
+                vecnormalize.pkl
+                logs/
+                    PPO_1/
+                        events.out.tfevents.1762367387.HoangNam.21076.0
+                    PPO_10/
+                        events.out.tfevents.1762368938.HoangNam.11776.0
+                    PPO_11/
+                        events.out.tfevents.1762369101.HoangNam.15632.0
+                    PPO_12/
+                        events.out.tfevents.1762369306.HoangNam.17148.0
+                    PPO_13/
+                        events.out.tfevents.1762394548.HoangNam.2956.0
+                    PPO_14/
+                        events.out.tfevents.1762394919.HoangNam.16428.0
+                    PPO_15/
+                        events.out.tfevents.1762395116.HoangNam.18204.0
+                    PPO_16/
+                        events.out.tfevents.1762395663.HoangNam.16248.0
+                    PPO_2/
+                        events.out.tfevents.1762367418.HoangNam.11792.0
+                    PPO_3/
+                        events.out.tfevents.1762367791.HoangNam.21356.0
+                    PPO_4/
+                        events.out.tfevents.1762367892.HoangNam.2468.0
+                    PPO_5/
+                        events.out.tfevents.1762368054.HoangNam.788.0
+                    PPO_6/
+                        events.out.tfevents.1762368162.HoangNam.7508.0
+                    PPO_7/
+                        events.out.tfevents.1762368267.HoangNam.20052.0
+                    PPO_8/
+                        events.out.tfevents.1762368365.HoangNam.13404.0
+                    PPO_9/
+                        events.out.tfevents.1762368470.HoangNam.20676.0
+                models/
                     ppo_model_final.zip
     preprocessing/
         convert_weight.py

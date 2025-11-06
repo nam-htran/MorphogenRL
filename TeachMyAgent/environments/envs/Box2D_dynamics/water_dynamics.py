@@ -188,7 +188,7 @@ class WaterContactDetector(contactListener):
         '''Safely remove fixture pairs when contact ends.'''
         fA, fB = contact.fixtureA, contact.fixtureB
 
-        # START FIX: Added safety checks to prevent crashes from destroyed bodies
+        # START FIX: Thêm các bước kiểm tra an toàn toàn diện để ngăn lỗi sập
         if not (hasattr(fA, 'body') and hasattr(fB, 'body') and fA.body and fB.body and
                 hasattr(fA.body, 'userData') and hasattr(fB.body, 'userData') and
                 fA.body.userData and fB.body.userData):

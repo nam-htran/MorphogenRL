@@ -4,10 +4,8 @@ from Box2D.b2 import (edgeShape, circleShape, fixtureDef, polygonShape, revolute
 from TeachMyAgent.environments.envs.utils.custom_user_data import CustomUserDataObjectTypes
 
 class ClimbingDynamics(object):
-    # START FIX: Add __init__ to create a list for joints that need to be destroyed
     def __init__(self):
         self.joints_to_destroy = []
-    # END FIX
         
     def before_step_climbing_dynamics(self, actions, body, world):
         '''
@@ -27,21 +25,15 @@ class ClimbingDynamics(object):
                     joint_to_destroy = next((_joint.joint for _joint in sensor_to_check.joints
                                              if isinstance(_joint.joint, Box2D.b2RevoluteJoint)), None)
                     if joint_to_destroy is not None:
-                        # START FIX: Defer joint destruction instead of immediate removal
-                        # The old line which caused crashes: world.DestroyJoint(joint_to_destroy)
                         self.joints_to_destroy.append(joint_to_destroy)
-                        # END FIX
 
     def after_step_climbing_dynamics(self, contact_detector, world):
         '''
         Safely destroy marked joints and create new climbing joints if sensors are still overlapping.
         '''
-        # START FIX: Safely destroy all joints marked for removal after world.Step()
-        # This is the correct and safe way to modify the physics world.
         for joint in self.joints_to_destroy:
             world.DestroyJoint(joint)
-        self.joints_to_destroy.clear() # Clean up the list
-        # END FIX
+        self.joints_to_destroy.clear()
         
         for sensor in contact_detector.contact_dictionaries:
             if len(contact_detector.contact_dictionaries[sensor]) > 0 and \
@@ -69,6 +61,7 @@ class ClimbingDynamics(object):
                     contact_detector.contact_dictionaries[sensor].remove(other_body)
                     if len(contact_detector.contact_dictionaries[sensor]) == 0:
                         sensor.userData.has_contact = False
+
 class ClimbingContactDetector(contactListener):
     '''
     Stores contacts between sensors and graspable surfaces.
@@ -95,10 +88,12 @@ class ClimbingContactDetector(contactListener):
     def EndContact(self, contact):
         fA, fB = contact.fixtureA, contact.fixtureB
 
+        # START FIX: Thêm các bước kiểm tra an toàn toàn diện
         if not (hasattr(fA, 'body') and hasattr(fB, 'body') and fA.body and fB.body and
                 hasattr(fA.body, 'userData') and hasattr(fB.body, 'userData') and
                 fA.body.userData and fB.body.userData):
             return
+        # END FIX
 
         bodies = [fA.body, fB.body]
         for idx, body in enumerate(bodies):

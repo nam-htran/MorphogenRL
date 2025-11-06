@@ -1,10 +1,10 @@
-run_id: "marl_interactive_8h_run"
+run_id: "marl_interactive_from_ppo_5M_run"
 mode: "interactive"
 n_agents: 2
 
-iterations: 100
+iterations: 2
 num_workers: 3
-num_gpus: 2
+num_gpus: 1
 
 reward_type: "shared"
 shared_policy: true 
@@ -15,14 +15,14 @@ use_tune: false
 ppo_config:
   training:
     gamma: 0.99
-    lr: 0.0003
+    lr: 0.00005
     lambda_: 0.95
     clip_param: 0.2
     entropy_coeff: 0.01
-    train_batch_size: 16384 
+    train_batch_size: 32768
   
   model:
-    fcnet_hiddens: [128, 128] 
+    fcnet_hiddens: [256, 256] 
     fcnet_activation: "tanh"
     
   env_runners:

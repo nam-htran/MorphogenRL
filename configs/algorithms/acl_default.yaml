@@ -1,10 +1,16 @@
-run_id: "acl_generalist_8h_run"
+run_id: "acl_from_ppo_5M_run"
 
-total_stages: 10
+total_stages: 2
 student_steps_per_stage: 100000 
 
 eval_episodes: 10
-mastery_threshold: 50.0 
+mastery_threshold: 100.0
+
+dynamic_threshold_settings:
+  enabled: true
+  offset: 50.0 
+  min_threshold: 120.0 
+
 n_envs: 8
 seed: 42
 
@@ -15,7 +21,7 @@ difficulty_dims:
   - creepers_height
   - creepers_spacing
 
-initial_difficulty: [0.0, 0.0, 0.0, 0.0, 1.0]
+initial_difficulty: [0.1, 0.1, 0.2, 0.1, 0.9]
 
 mastery_order:
   - input_vector_0
@@ -25,14 +31,14 @@ mastery_order:
   - creepers_spacing
 
 difficulty_increments:
-  input_vector_0: 0.2
-  input_vector_1: 0.2
+  input_vector_0: 0.1
+  input_vector_1: 0.1
   water_level: 0.1
-  creepers_height: 0.2
-  creepers_spacing: -0.1 # Giảm khoảng cách để làm khó hơn
+  creepers_height: 0.1
+  creepers_spacing: -0.05
 
 ppo_config:
-  learning_rate: 0.0003
+  learning_rate: 0.0001
   buffer_size: 500000
   batch_size: 256
   ent_coef: 'auto'

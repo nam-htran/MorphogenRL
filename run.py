@@ -1,3 +1,4 @@
+# ===== .\run.py =====
 
 import argparse
 import os
@@ -6,6 +7,7 @@ import yaml
 from types import SimpleNamespace
 import ray
 from typing import Any, Callable, Mapping
+import numpy as np
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
@@ -16,6 +18,10 @@ from scripts import evaluate as evaluate_script
 from preprocessing import convert_weight
 from scripts import check_all as check_all_script
 from utils.seeding import set_seed
+# START CHANGE: Import các thành phần cần thiết cho việc đánh giá động
+from scripts.train_acl import evaluate_student
+from stable_baselines3 import PPO
+# END CHANGE
 
 def load_config(config_path: str) -> dict:
     if not os.path.exists(config_path):
@@ -58,6 +64,53 @@ def load_and_merge_configs(base_config_path: str) -> dict:
         final_config[stage_name] = merged_stage_config
         
     return final_config
+
+# START CHANGE: Hàm helper để tính toán ngưỡng động
+def _calculate_dynamic_threshold(model_path: str, acl_config: dict, acl_args: SimpleNamespace) -> float:
+    """
+    Đánh giá mô hình PPO trên độ khó ban đầu của ACL và tính toán mastery_threshold mới.
+    """
+    settings = acl_config.get('dynamic_threshold_settings', {})
+    if not settings.get('enabled', False):
+        return acl_config['mastery_threshold'] # Trả về giá trị tĩnh nếu không bật
+
+    print_header("DYNAMIC MASTERY THRESHOLD CALCULATION")
+    print(f"Evaluating PPO model '{model_path}' on initial ACL difficulty.")
+
+    # Tải mô hình PPO
+    try:
+        ppo_model = PPO.load(model_path, device="cpu")
+    except Exception as e:
+        print(f"WARNING: Could not load PPO model for dynamic threshold calculation. Error: {e}")
+        return acl_config['mastery_threshold']
+
+    # Lấy thông số độ khó ban đầu từ cấu hình ACL
+    initial_difficulty = np.array(acl_config.get('initial_difficulty', []))
+    dim_names = acl_config.get('difficulty_dims', [])
+    
+    # Chạy đánh giá
+    baseline_reward = evaluate_student(
+        student_model=ppo_model,
+        env_id=acl_args.env,
+        body_type=acl_args.body,
+        difficulty_vector=initial_difficulty,
+        dim_names=dim_names,
+        num_episodes=5, # Đánh giá nhanh trên 5 episodes
+        args=acl_args
+    )
+    
+    print(f"PPO model baseline average reward: {baseline_reward:.2f}")
+
+    # Tính toán ngưỡng mới
+    offset = settings.get('offset', 50.0)
+    min_threshold = settings.get('min_threshold', 100.0)
+    new_threshold = max(baseline_reward + offset, min_threshold)
+    
+    print(f"Original mastery_threshold: {acl_config['mastery_threshold']}")
+    print(f"Dynamically calculated mastery_threshold: {new_threshold:.2f}")
+    
+    return new_threshold
+# END CHANGE
 
 def ray_init_and_run(func, args):
     if not ray.is_initialized():
@@ -126,6 +179,19 @@ def run_pipeline(args: SimpleNamespace):
             
         stage_args = SimpleNamespace(**final_config)
 
+        # START CHANGE: Logic tính toán threshold động cho ACL
+        if stage_name == 'ACL' and final_config.get('pretrained_model_path'):
+            dynamic_settings = final_config.get('dynamic_threshold_settings', {})
+            if dynamic_settings.get('enabled', False):
+                new_threshold = _calculate_dynamic_threshold(
+                    final_config['pretrained_model_path'],
+                    final_config, # Truyền toàn bộ cấu hình của stage
+                    stage_args
+                )
+                final_config['mastery_threshold'] = new_threshold
+                stage_args.mastery_threshold = new_threshold # Cập nhật lại args
+        # END CHANGE
+
         checkpoint_path = None
         if stage_name == 'PPO':
             checkpoint_path = run_task(train_ppo.main, stage_args, "PPO Training")
@@ -156,6 +222,7 @@ def run_pipeline(args: SimpleNamespace):
     print_header("PIPELINE COMPLETE")
 
 if __name__ == '__main__':
+    # ... phần còn lại của file giữ nguyên ...
     parser = argparse.ArgumentParser(description="Main entry point for TeachMyAgent.", formatter_class=argparse.RawTextHelpFormatter)
     subparsers = parser.add_subparsers(dest='command', required=True, help="Available commands")
 

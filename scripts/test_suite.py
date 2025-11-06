@@ -1,3 +1,4 @@
+# ===== .\scripts\test_suite.py =====
 import argparse
 import os
 import sys
@@ -10,10 +11,10 @@ import time
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from TeachMyAgent.environments.envs.bodies.BodiesEnum import BodiesEnum
-from utils.env_utils import build_and_setup_env, setup_render_window # Import setup_render_window
+from utils.env_utils import build_and_setup_env, setup_render_window 
 from preprocessing import convert_weight
-from scripts import train_ppo, train_acl
-from run import ray_init_and_run
+from scripts import train_ppo, train_acl, train_marl
+from run import ray_init_and_run, _calculate_dynamic_threshold, load_config
 
 def print_header(text, char='='):
     width = 80
@@ -24,10 +25,8 @@ def print_header(text, char='='):
 def run_test(func, test_name, args_namespace=None):
     print_header(f"RUNNING TEST: {test_name.upper()}", char='-')
     try:
-        if args_namespace:
-            result = func(args_namespace)
-        else:
-            result = func()
+        is_no_args_func = 'args_namespace' not in func.__code__.co_varnames and func.__code__.co_argcount == 0
+        result = func() if is_no_args_func else func(args_namespace)
         print(f"✅ SUCCESS: {test_name} completed.")
         return result, True
     except Exception:
@@ -36,7 +35,7 @@ def run_test(func, test_name, args_namespace=None):
         traceback.print_exc()
         return None, False
 
-# --- Test Functions ---
+# --- Các hàm test sanity (giữ nguyên) ---
 def test_body_creation():
     """Attempts to instantiate every body in BodiesEnum."""
     print("Testing instantiation of all agent bodies...")
@@ -59,11 +58,15 @@ def test_body_creation():
 def test_env_parameterization():
     """Tests if the parkour environment can be parameterized correctly."""
     print("Testing parkour environment parameterization...")
-    env_args = SimpleNamespace(horizon=100)
-    build_and_setup_env('parkour', 'classic_bipedal', {}, args=env_args).close()
+    env_config_path = os.path.join(os.path.dirname(__file__), '..', 'configs', 'environments', 'parkour_default.yaml')
+    env_config = load_config(env_config_path)
+    env_args = SimpleNamespace(**env_config, **env_config.get('env_params', {}))
+    env_args.horizon = 100
+
+    build_and_setup_env(env_args.env, env_args.body, {}, args=env_args).close()
     
     custom_params = {"input_vector": np.array([0.1, -0.2, 0.3]), "water_level": 0.5, "creepers_height": 0.0}
-    env = build_and_setup_env('parkour', 'classic_bipedal', custom_params, args=env_args)
+    env = build_and_setup_env(env_args.env, env_args.body, custom_params, args=env_args)
     assert env.unwrapped.creepers_height == 0.0, "Creeper height not set correctly"
     env.close()
     
@@ -73,8 +76,12 @@ def test_env_parameterization():
 def test_reward_function_sanity():
     """Runs a few steps and checks if the reward is a valid float."""
     print("Running reward function sanity check...")
-    env_args = SimpleNamespace(horizon=100)
-    env = build_and_setup_env('parkour', 'classic_bipedal', {}, args=env_args)
+    env_config_path = os.path.join(os.path.dirname(__file__), '..', 'configs', 'environments', 'parkour_default.yaml')
+    env_config = load_config(env_config_path)
+    env_args = SimpleNamespace(**env_config, **env_config.get('env_params', {}))
+    env_args.horizon = 100
+
+    env = build_and_setup_env(env_args.env, env_args.body, {}, args=env_args)
     env.reset()
     for _ in range(5):
         action = env.action_space.sample()
@@ -85,7 +92,6 @@ def test_reward_function_sanity():
     print("Reward function returns valid float values.")
     return True
 
-# START CHANGE: Updated rendering test to be more interactive and support fullscreen
 def test_rendering_popup(args):
     """
     Tests if the rendering window can open, run with random actions, and close.
@@ -93,16 +99,19 @@ def test_rendering_popup(args):
     print("Testing rendering window popup...")
     env = None
     try:
-        # Use args from the test_suite command to control rendering
+        env_config_path = os.path.join(os.path.dirname(__file__), '..', 'configs', 'environments', 'parkour_default.yaml')
+        env_config = load_config(env_config_path)
+
         render_args = SimpleNamespace(
             fullscreen=args.render_fullscreen, 
-            width=None if args.render_fullscreen else 800, # Use a larger default window
-            height=None if args.render_fullscreen else 600,
-            horizon=200 # Run for a bit longer
+            width=None if args.render_fullscreen else 800, 
+            height=None if args.render_fullscreen else 600
         )
-        env = build_and_setup_env('parkour', 'classic_bipedal', {}, render_mode="human", args=render_args)
         
-        # Use the utility to setup window size correctly
+        env_render_args = SimpleNamespace(**env_config, **env_config.get('env_params', {}), **vars(render_args))
+        env_render_args.horizon = 200
+        
+        env = build_and_setup_env(env_render_args.env, env_render_args.body, {}, render_mode="human", args=env_render_args)
         setup_render_window(env, render_args)
 
         env.reset()
@@ -111,18 +120,15 @@ def test_rendering_popup(args):
         else:
             print(f"  - A {render_args.width}x{render_args.height} window should appear for ~4 seconds...")
         
-        for i in range(render_args.horizon):
-            # Take a random action
+        for i in range(200):
             action = env.action_space.sample()
             env.step(action)
-            
-            # Render the environment
             env.render()
             
             if env.unwrapped.viewer and env.unwrapped.viewer.window and env.unwrapped.viewer.window.has_exit:
                 print("  - Window closed by user during test.")
                 break
-            time.sleep(1.0 / 50.0) # Limit to 50 FPS
+            time.sleep(1.0 / 50.0) 
         
         print("  - Rendering test loop completed without crashing.")
         return True
@@ -130,16 +136,53 @@ def test_rendering_popup(args):
         if env:
             env.close()
             print("  - Environment and rendering window closed successfully.")
-# END CHANGE
+
+def test_dynamic_threshold_calculation(ppo_model_path: str, acl_config: dict):
+    """
+    Tests the logic for calculating a dynamic mastery threshold for ACL.
+    Returns the calculated threshold.
+    """
+    print("Testing dynamic mastery threshold calculation logic...")
+    
+    acl_args_dict = acl_config.copy()
+    acl_args_dict['render'] = False
+    acl_args = SimpleNamespace(**acl_args_dict)
+
+    calculated_threshold = _calculate_dynamic_threshold(
+        model_path=ppo_model_path,
+        acl_config=acl_config,
+        acl_args=acl_args
+    )
+
+    assert isinstance(calculated_threshold, float), f"Threshold should be a float, but got {type(calculated_threshold)}"
+    
+    dynamic_settings = acl_config.get('dynamic_threshold_settings', {})
+    if dynamic_settings.get('enabled', False):
+        min_threshold = dynamic_settings.get('min_threshold', 0.0)
+        assert calculated_threshold >= min_threshold, \
+            f"Calculated threshold {calculated_threshold} is below the minimum {min_threshold}"
+    
+    print(f"Dynamic threshold calculated successfully: {calculated_threshold:.2f}")
+    return calculated_threshold
 
 def main(args): 
     print_header("STARTING EXPANDED PROJECT TEST SUITE")
     failed_tests = []
     
+    config_dir = os.path.join(os.path.dirname(__file__), '..', 'configs')
+    env_config_path = os.path.join(config_dir, 'environments', 'parkour_default.yaml')
+    ppo_config_path = os.path.join(config_dir, 'algorithms', 'ppo_default.yaml')
+    acl_config_path = os.path.join(config_dir, 'algorithms', 'acl_default.yaml')
+    marl_config_path = os.path.join(config_dir, 'algorithms', 'marl_default.yaml')
+    
+    env_config = load_config(env_config_path)
+    ppo_config = {**env_config, **load_config(ppo_config_path), **env_config.get('env_params', {})}
+    acl_config = {**env_config, **load_config(acl_config_path), **env_config.get('env_params', {})}
+    marl_config = {**env_config, **load_config(marl_config_path), **env_config.get('env_params', {})}
+
     print_header("GROUP 1: SANITY CHECKS", char='*')
     
     if args.test_render:
-        # Pass the args object to the test function
         _, success = run_test(lambda: test_rendering_popup(args), "Rendering Window Popup")
         if not success: failed_tests.append("Rendering Window Popup")
     else:
@@ -162,27 +205,54 @@ def main(args):
     ppo_model_path = None
     
     if not failed_tests:
-        ppo_args = SimpleNamespace(
-            env='parkour', body='classic_bipedal', run_id="test_suite_ppo",
-            total_timesteps=512, n_envs=2, save_freq=1024, seed=42, horizon=256,
-            reward_shaping={'progress_multiplier': 1.0}, ppo_config={'n_steps': 128},
-            render=False 
-        )
+        ppo_test_config = ppo_config.copy()
+        # GHI ĐÈ các tham số step để test nhanh
+        ppo_test_config['total_timesteps'] = 512
+        ppo_test_config['n_envs'] = 2 # Giảm số env để test nhanh hơn
+        if 'ppo_config' in ppo_test_config:
+            ppo_test_config['ppo_config']['n_steps'] = 128 # BẮT BUỘC: n_steps * n_envs <= total_timesteps
+        
+        ppo_test_config['run_id'] = "test_suite_ppo"
+        ppo_test_config['render'] = False
+        ppo_args = SimpleNamespace(**ppo_test_config)
+        
         ppo_model_path, success = run_test(train_ppo.main, "PPO Micro-Training", args_namespace=ppo_args)
         if not success: failed_tests.append("PPO Micro-Training")
-
+    
+    dynamic_threshold = None
     if ppo_model_path and not failed_tests:
-        acl_args = SimpleNamespace(
-            env='parkour', body='classic_bipedal', run_id="test_suite_acl",
-            total_stages=1, student_steps_per_stage=256, n_envs=2,
-            pretrained_model_path=ppo_model_path, mastery_threshold=1000,
-            eval_episodes=1, horizon=128, seed=42,
-            difficulty_dims=['water_level'], initial_difficulty=[0.1], mastery_order=['water_level'],
-            difficulty_increments={'water_level': 0.1},
-            render=False
-        )
+        dynamic_threshold, success = run_test(lambda: test_dynamic_threshold_calculation(ppo_model_path, acl_config), "Dynamic Threshold Calculation")
+        if not success: failed_tests.append("Dynamic Threshold Calculation")
+
+    if ppo_model_path and dynamic_threshold is not None and not failed_tests:
+        acl_test_config = acl_config.copy()
+        acl_test_config['total_stages'] = 1
+        acl_test_config['student_steps_per_stage'] = 256
+        acl_test_config['n_envs'] = 2 # Giảm số env để test nhanh hơn
+        
+        acl_test_config['run_id'] = "test_suite_acl"
+        acl_test_config['pretrained_model_path'] = ppo_model_path
+        acl_test_config['mastery_threshold'] = dynamic_threshold
+        acl_test_config['render'] = False
+
+        acl_args = SimpleNamespace(**acl_test_config)
+        
         _, success = run_test(train_acl.main, "ACL Micro-Training (with Transfer)", args_namespace=acl_args)
         if not success: failed_tests.append("ACL Micro-Training")
+    
+    if not failed_tests:
+        marl_test_config = marl_config.copy()
+        marl_test_config['iterations'] = 2
+        marl_test_config['run_id'] = "test_suite_marl"
+        marl_test_config['num_workers'] = 0 
+        marl_test_config['num_gpus'] = 0
+
+
+        marl_args = SimpleNamespace(**marl_test_config)
+
+        _, success = run_test(lambda: ray_init_and_run(train_marl.main, marl_args), "MARL Micro-Training")
+        if not success:
+            failed_tests.append("MARL Micro-Training")
     
     print_header("TEST SUITE SUMMARY")
     if not failed_tests:
