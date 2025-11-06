@@ -1,10 +1,10 @@
-run_id: "marl_interactive_from_ppo_5M_run"
+run_id: "marl_8h_run"
 mode: "interactive"
 n_agents: 2
 
-iterations: 2
+iterations: 150
 num_workers: 3
-num_gpus: 1
+num_gpus: 2
 
 reward_type: "shared"
 shared_policy: true 

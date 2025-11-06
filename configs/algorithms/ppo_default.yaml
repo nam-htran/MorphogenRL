@@ -1,8 +1,8 @@
-run_id: "ppo_base_5M_run"
-total_timesteps: 100000
-save_freq: 50000
+run_id: "ppo_base_8h_run"
+total_timesteps: 10000000
+save_freq: 500000
 
-n_envs: 8
+n_envs: 32
 seed: 42
 
 reward_shaping:
