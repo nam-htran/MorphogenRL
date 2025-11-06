@@ -1,8 +1,8 @@
 run_id: "ppo_base_8h_run"
-total_timesteps: 10000000
-save_freq: 500000
+total_timesteps: 30000000
+save_freq: 1000000
 
-n_envs: 32
+n_envs: 3
 seed: 42
 
 reward_shaping:
@@ -21,5 +21,5 @@ ppo_config:
   ent_coef: 0.005
   learning_rate: 0.00005
   n_epochs: 10
-  batch_size: 256
+  batch_size: 512
   clip_range: 0.2

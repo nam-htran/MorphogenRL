@@ -1,9 +1,9 @@
 run_id: "acl_from_ppo_8h_run"
 
 total_stages: 20
-student_steps_per_stage: 250000 
+student_steps_per_stage: 1000000
 
-eval_episodes: 10
+eval_episodes: 20
 mastery_threshold: 100.0
 
 dynamic_threshold_settings:
@@ -11,7 +11,7 @@ dynamic_threshold_settings:
   offset: 50.0 
   min_threshold: 120.0 
 
-n_envs: 32
+n_envs: 3
 seed: 42
 
 difficulty_dims:
@@ -40,7 +40,7 @@ difficulty_increments:
 ppo_config:
   learning_rate: 0.0001
   buffer_size: 500000
-  batch_size: 256
+  batch_size: 512
   ent_coef: 'auto'
   gamma: 0.99
   learning_starts: 10000
