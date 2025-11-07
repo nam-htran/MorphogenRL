@@ -39,8 +39,8 @@ difficulty_increments:
 
 ppo_config:
   learning_rate: 0.0001
-  buffer_size: 500000
-  batch_size: 512
+  buffer_size: 2000000
+  batch_size: 1024
   ent_coef: 'auto'
   gamma: 0.99
-  learning_starts: 10000
+  learning_starts: 50000
