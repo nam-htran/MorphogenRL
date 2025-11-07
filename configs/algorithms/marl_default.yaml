@@ -3,7 +3,7 @@ mode: "interactive"
 n_agents: 2
 
 iterations: 250
-num_workers: 2
+num_workers: 80
 num_gpus: 2
 
 reward_type: "shared"

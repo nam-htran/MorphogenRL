@@ -11,7 +11,7 @@ dynamic_threshold_settings:
   offset: 50.0 
   min_threshold: 120.0 
 
-n_envs: 3
+n_envs: 80
 seed: 42
 
 difficulty_dims:
