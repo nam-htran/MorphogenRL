@@ -1,6 +1,6 @@
 run_id: "ppo_base_8h_run"
-total_timesteps: 40000000
-save_freq: 1000000
+total_timesteps: 34000000 
+save_freq: 2000000
 
 n_envs: 80
 seed: 42
