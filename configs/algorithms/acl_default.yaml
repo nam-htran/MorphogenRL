@@ -1,15 +1,16 @@
-run_id: "acl_from_ppo_8h_run"
+run_id: "acl_8h_final_gentle_start"
 
 total_stages: 20
 student_steps_per_stage: 500000
 
 eval_episodes: 20
-mastery_threshold: 1500.0
+
+mastery_threshold: 3000.0
 
 dynamic_threshold_settings:
   enabled: true
-  offset: 50.0 
-  min_threshold: 1000.0 
+  offset: 100.0
+  min_threshold: 2000.0 
 
 n_envs: 80
 seed: 42
@@ -21,7 +22,7 @@ difficulty_dims:
   - creepers_height
   - creepers_spacing
 
-initial_difficulty: [0.4, 0.4, 0.1, 0.2, 0.8]
+initial_difficulty: [0.05, 0.05, 0.0, 0.0, 1.0]
 
 mastery_order:
   - input_vector_0

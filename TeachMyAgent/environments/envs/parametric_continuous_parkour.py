@@ -14,36 +14,81 @@ from TeachMyAgent.environments.envs.Box2D_dynamics.climbing_dynamics import Clim
 from TeachMyAgent.environments.envs.PCGAgents.CPPN.cppn_pytorch import CPPN_Pytorch
 from TeachMyAgent.environments.envs.bodies.BodiesEnum import BodiesEnum
 from TeachMyAgent.environments.envs.bodies.BodyTypesEnum import BodyTypesEnum
-from TeachMyAgent.environments.envs.utils.custom_user_data import CustomUserDataObjectTypes, CustomUserData
+from TeachMyAgent.environments.envs.utils.custom_user_data import (
+    CustomUserDataObjectTypes, 
+    CustomUserData, 
+    CustomBodyUserData, 
+    CustomMotorUserData, 
+    CustomBodySensorUserData
+)
 
 class ContactDetector(WaterContactDetector, ClimbingContactDetector):
     def __init__(self, env):
-        super(ContactDetector, self).__init__(); self.env = env
+        # Gọi tất cả các hàm __init__ của lớp cha một cách tường minh
+        WaterContactDetector.__init__(self)
+        ClimbingContactDetector.__init__(self)
+        self.env = env
+
     def BeginContact(self, contact):
         fA, fB = contact.fixtureA, contact.fixtureB
-        if (not hasattr(fA, 'body') or not hasattr(fB, 'body') or fA.body is None or fB.body is None or not hasattr(fA.body, 'userData') or not hasattr(fB.body, 'userData') or fA.body.userData is None or fB.body.userData is None or not hasattr(fA.body.userData, 'object_type') or not hasattr(fB.body.userData, 'object_type')): return
-        bodies = [contact.fixtureA.body, contact.fixtureB.body]
-        if any([body.userData.object_type == CustomUserDataObjectTypes.WATER for body in bodies]): WaterContactDetector.BeginContact(self, contact)
+        
+        # Kiểm tra an toàn toàn diện: đảm bảo body và userData tồn tại và đúng loại
+        if not all(hasattr(f, 'body') and f.body and hasattr(f.body, 'userData') and 
+                   isinstance(f.body.userData, CustomUserData) for f in [fA, fB]):
+            return
+
+        bodies = [fA.body, fB.body]
+        if any(body.userData.object_type == CustomUserDataObjectTypes.WATER for body in bodies):
+            WaterContactDetector.BeginContact(self, contact)
+
     def EndContact(self, contact):
         fA, fB = contact.fixtureA, contact.fixtureB
-        if (not hasattr(fA, 'body') or not hasattr(fB, 'body') or fA.body is None or fB.body is None or not hasattr(fA.body, 'userData') or not hasattr(fB.body, 'userData') or fA.body.userData is None or fB.body.userData is None or not hasattr(fA.body.userData, 'object_type') or not hasattr(fB.body.userData, 'object_type')): return
+        
+        # Kiểm tra an toàn toàn diện: đảm bảo body và userData tồn tại và đúng loại
+        if not all(hasattr(f, 'body') and f.body and hasattr(f.body, 'userData') and 
+                   isinstance(f.body.userData, CustomUserData) for f in [fA, fB]):
+            return
+        
         bodies = [fA.body, fB.body]
-        if any([body.userData.object_type == CustomUserDataObjectTypes.WATER for body in bodies]): WaterContactDetector.EndContact(self, contact)
-        elif any([body.userData.object_type == CustomUserDataObjectTypes.BODY_SENSOR for body in bodies]): ClimbingContactDetector.EndContact(self, contact)
+        
+        is_water_contact = any(
+            isinstance(body.userData, CustomUserData) and body.userData.object_type == CustomUserDataObjectTypes.WATER 
+            for body in bodies
+        )
+        is_sensor_contact = any(
+            isinstance(body.userData, CustomUserData) and body.userData.object_type == CustomUserDataObjectTypes.BODY_SENSOR 
+            for body in bodies
+        )
+
+        if is_water_contact:
+            WaterContactDetector.EndContact(self, contact)
+        elif is_sensor_contact:
+            ClimbingContactDetector.EndContact(self, contact)
         else:
             for body in bodies:
-                if (hasattr(body.userData, 'object_type') and body.userData.object_type == CustomUserDataObjectTypes.BODY_OBJECT and body.userData.check_contact): body.userData.has_contact = False
+                if (isinstance(body.userData, CustomBodyUserData) and 
+                    body.userData.object_type == CustomUserDataObjectTypes.BODY_OBJECT and 
+                    body.userData.check_contact):
+                    body.userData.has_contact = False
+
     def Reset(self):
-        WaterContactDetector.Reset(self); ClimbingContactDetector.Reset(self)
+        WaterContactDetector.Reset(self)
+        ClimbingContactDetector.Reset(self)
 
 class LidarCallback(Box2D.b2.rayCastCallback):
     def __init__(self, agent_mask_filter):
-        Box2D.b2.rayCastCallback.__init__(self); self.agent_mask_filter = agent_mask_filter; self.fixture = None; self.is_water_detected = False; self.is_creeper_detected = False
+        Box2D.b2.rayCastCallback.__init__(self)
+        self.agent_mask_filter = agent_mask_filter
+        self.fixture = None
+        self.is_water_detected = False
+        self.is_creeper_detected = False
     def ReportFixture(self, fixture, point, normal, fraction):
         if (fixture.filterData.categoryBits & self.agent_mask_filter) == 0: return -1
-        self.p2 = point; self.fraction = fraction
-        if hasattr(fixture.body.userData, 'object_type'):
-            self.is_water_detected = fixture.body.userData.object_type == CustomUserDataObjectTypes.WATER; self.is_creeper_detected = fixture.body.userData.object_type == CustomUserDataObjectTypes.SENSOR_GRIP_TERRAIN
+        self.p2 = point
+        self.fraction = fraction
+        if hasattr(fixture, 'body') and fixture.body and hasattr(fixture.body, 'userData') and isinstance(fixture.body.userData, CustomUserData):
+            self.is_water_detected = fixture.body.userData.object_type == CustomUserDataObjectTypes.WATER
+            self.is_creeper_detected = fixture.body.userData.object_type == CustomUserDataObjectTypes.SENSOR_GRIP_TERRAIN
         return fraction
         
 FPS=50; SCALE=30.0; VIEWPORT_W=600; VIEWPORT_H=400; NB_LIDAR=10; LIDAR_RANGE=160/SCALE; INITIAL_RANDOM=5; TERRAIN_STEP=14/SCALE; TERRAIN_LENGTH=200; TERRAIN_HEIGHT=VIEWPORT_H/SCALE/4; TERRAIN_END=5; INITIAL_TERRAIN_STARTPAD=20; FRICTION=2.5; WATER_DENSITY=1.0; HULL_CONTACT_PENALTY=0.1
@@ -64,10 +109,8 @@ class ParametricContinuousParkour(gym.Env, EzPickle):
         self.ts = 0
         self.flip_termination_steps = flip_termination_steps
         
-        # All kwargs are now potential reward shaping parameters
         self.reward_params = kwargs.copy()
         
-        # Set default values for any reward params not provided in kwargs
         default_rewards = {
             'progress_multiplier': 130.0, 'velocity_multiplier': 0.3, 
             'torque_penalty_multiplier': 40.0, 'alive_bonus': 0.0,
@@ -94,7 +137,6 @@ class ParametricContinuousParkour(gym.Env, EzPickle):
 
         body_type = BodiesEnum.get_body_type(agent_body_type)
         
-        # The body constructor does not need reward params
         body_constructor_args = {}
         if body_type in [BodyTypesEnum.SWIMMER, BodyTypesEnum.AMPHIBIAN]:
             body_constructor_args['density'] = WATER_DENSITY
@@ -238,21 +280,15 @@ class ParametricContinuousParkour(gym.Env, EzPickle):
         reward = 0
         info = {}
 
-        # Progress and velocity rewards
         shaping = self.reward_params['progress_multiplier'] * pos[0] / SCALE 
         if self.prev_shaping is not None: reward += shaping - self.prev_shaping
         self.prev_shaping = shaping
         reward += self.reward_params['velocity_multiplier'] * vel.x
         
-        # --- START: NEW FOOT AIR-TIME & GAIT BONUS ---
-        # Only apply these bonuses for bipedal walkers with 4 motors
         if self.agent_body.body_type == BodyTypesEnum.WALKER and len(self.agent_body.motors) == 4:
-            # Assuming right leg motors are 0 (hip) and 1 (knee), left are 2 (hip) and 3 (knee)
-            # The foot is the contact_body of the knee motor
             right_foot = self.agent_body.motors[1].userData.contact_body
             left_foot = self.agent_body.motors[3].userData.contact_body
             
-            # Reward for lifting a foot off the ground
             air_time_bonus = 0.0
             if not right_foot.userData.has_contact:
                 air_time_bonus += self.reward_params.get('foot_air_time_bonus', 0.0)
@@ -260,16 +296,11 @@ class ParametricContinuousParkour(gym.Env, EzPickle):
                 air_time_bonus += self.reward_params.get('foot_air_time_bonus', 0.0)
             reward += air_time_bonus
             
-            # Reward for alternating leg movement (gait)
-            # Check the speed of the hip joints
             right_hip_speed = self.agent_body.motors[0].speed
             left_hip_speed = self.agent_body.motors[2].speed
-            # If hip speeds have opposite signs, they are moving in opposite directions (good gait)
             if right_hip_speed * left_hip_speed < 0:
                 reward += self.reward_params.get('gait_bonus', 0.0)
-        # --- END: NEW FOOT AIR-TIME & GAIT BONUS ---
         
-        # Knee-based standing bonus
         if self.reward_params.get('standing_bonus_multiplier', 0.0) > 0 and not is_under_water:
             if len(self.agent_body.motors) >= 2:
                 knee_joints = self.agent_body.motors[-2:] 
@@ -280,7 +311,6 @@ class ParametricContinuousParkour(gym.Env, EzPickle):
                 knee_straight_bonus /= len(knee_joints)
                 reward += self.reward_params['standing_bonus_multiplier'] * knee_straight_bonus
 
-        # Penalties
         reward -= self.reward_params['body_angle_penalty'] * abs(state[0])
         
         ground_y = TERRAIN_HEIGHT
@@ -295,12 +325,10 @@ class ParametricContinuousParkour(gym.Env, EzPickle):
         torque_penalty = sum(self.agent_body.TORQUE_PENALTY * self.reward_params['torque_penalty_multiplier'] * np.clip(np.abs(a), 0, 1) for a in action)
         reward -= torque_penalty
         
-        # Stagnation penalty
         if abs(pos.x - self.last_progress_x) < 0.01: self.stagnation_counter += 1
         else: self.stagnation_counter = 0; self.last_progress_x = pos.x
         if self.stagnation_counter > 100: reward -= self.reward_params['stagnation_penalty']
         
-        # Termination conditions
         terminated = False
         is_fall = False
         if abs(state[0]) > 1.5: self.flipped_counter += 1
