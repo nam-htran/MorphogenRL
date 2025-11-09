@@ -6,12 +6,14 @@ n_envs: 80
 seed: 42
 
 reward_shaping:
-  progress_multiplier: 400.0
+  progress_multiplier: 130.0
+
   velocity_multiplier: 2.0
   torque_penalty_multiplier: 2.0
   body_angle_penalty: 1.0
-  low_hull_penalty: 1.5
+  low_hull_penalty: 2.0
   standing_bonus_multiplier: 2.0
+  
   foot_air_time_bonus: 0.2
   gait_bonus: 0.2
 
@@ -19,7 +21,9 @@ ppo_config:
   gamma: 0.995
   n_steps: 2048 
   ent_coef: 0.005
+  
   learning_rate: 0.00005
+  
   n_epochs: 10
   batch_size: 1024 
   clip_range: 0.2
