@@ -1,6 +1,3 @@
-PIPELINE_SETTINGS:
-  transfer_learning: true
-
 STAGES:
   PPO:
     enabled: true

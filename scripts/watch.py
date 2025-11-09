@@ -10,7 +10,7 @@ from ray.tune.registry import register_env
 import TeachMyAgent.environments
 import torch
 
-from stable_baselines3 import PPO
+from stable_baselines3 import PPO, SAC # START CHANGE: Import SAC
 from stable_baselines3.common.vec_env import VecNormalize, DummyVecEnv
 
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -30,6 +30,10 @@ def add_watch_args(parser: argparse.ArgumentParser) -> argparse.ArgumentParser:
     watch_group = parser.add_argument_group('Playback Parameters')
     watch_group.add_argument('--framework', type=str, default='auto', choices=['auto', 'sb3', 'rllib'],
                              help="Model's framework. 'auto' will attempt to autodetect.")
+    # START CHANGE: Add --algo argument to specify the SB3 algorithm
+    watch_group.add_argument('--algo', type=str, default='ppo', choices=['ppo', 'sac'],
+                             help="[SB3] The algorithm class to use for loading the model.")
+    # END CHANGE
     watch_group.add_argument('--num-episodes', type=int, default=10, help="Number of episodes to watch.")
     watch_group.add_argument('--timeout', type=int, default=5000, help="Maximum number of steps per episode.")
     watch_group.add_argument('--fast-forward', '-ff', action='store_true', help="Skip the delay between frames.")
@@ -47,16 +51,26 @@ def add_watch_args(parser: argparse.ArgumentParser) -> argparse.ArgumentParser:
 
 def _watch_sb3(args):
     """Handles watching a Stable Baselines 3 model."""
-    print("--- Stable Baselines 3 Watch Mode (PPO/ACL) ---")
+    print("--- Stable Baselines 3 Watch Mode ---")
     if not os.path.exists(args.model_path):
         print(f"ERROR: Model file not found at '{args.model_path}'")
         sys.exit(1)
 
+    # START CHANGE: Map algorithm string to SB3 class
+    ALGO_MAP = {
+        "ppo": PPO,
+        "sac": SAC
+    }
+    if args.algo not in ALGO_MAP:
+        print(f"ERROR: Invalid algorithm '{args.algo}'. Please choose from {list(ALGO_MAP.keys())}.")
+        sys.exit(1)
+    ModelClass = ALGO_MAP[args.algo]
+    print(f"Using algorithm class: {ModelClass.__name__}")
+    # END CHANGE
+
     model_dir = os.path.dirname(args.model_path)
-    # The stats file should be in the parent directory of the 'models' folder
     stats_path = os.path.join(os.path.dirname(model_dir), "vecnormalize.pkl")
     if not os.path.exists(stats_path):
-        # Fallback for older structures
         stats_path = os.path.join(model_dir, "vecnormalize.pkl")
         if not os.path.exists(stats_path):
             print(f"ERROR: VecNormalize stats file ('vecnormalize.pkl') not found in the output directory.")
@@ -65,21 +79,19 @@ def _watch_sb3(args):
 
     print(f"Found VecNormalize stats at: {stats_path}")
 
-    # Create the environment first to check for mismatches
     venv_unnormalized = DummyVecEnv([lambda: build_and_setup_env(
         args.env, args.body,
         collect_env_params(args.env, args),
         render_mode="human", args=args
     )])
     
-    # Load the model without an environment to inspect its properties
     try:
-        temp_model = PPO.load(args.model_path, env=None)
+        # Load using the selected ModelClass
+        temp_model = ModelClass.load(args.model_path, env=None)
     except Exception as e:
         print(f"Error loading model from '{args.model_path}': {e}")
         sys.exit(1)
 
-    # --- START FIX: User-friendly Error Check for observation space mismatch ---
     env_obs_space = venv_unnormalized.observation_space
     model_obs_space = temp_model.observation_space
 
@@ -94,9 +106,7 @@ def _watch_sb3(args):
         print("!"*80 + "\n")
         venv_unnormalized.close()
         sys.exit(1)
-    # --- END FIX ---
 
-    # If shapes match, proceed to load VecNormalize and the model properly
     print("Observation spaces match. Loading environment with normalization stats...")
     venv = VecNormalize.load(stats_path, venv_unnormalized)
     venv.training = False
@@ -106,7 +116,8 @@ def _watch_sb3(args):
     setup_render_window(venv.envs[0], args)
 
     print("Loading model for playback...")
-    model = PPO.load(args.model_path, env=venv)
+    # Load using the selected ModelClass
+    model = ModelClass.load(args.model_path, env=venv)
     print("Model loaded successfully.")
 
     for i in range(args.num_episodes):
@@ -208,9 +219,7 @@ def _watch_rllib(args):
                 module = algo.get_module(policy_id)
                 obs_tensor = torch.from_numpy(obs[agent_id]).unsqueeze(0)
                 with torch.no_grad():
-                    # Get action distribution from the model's forward pass
                     action_dist_inputs = module.forward_inference({"obs": obs_tensor})['action_dist_inputs']
-                # For deterministic action, take the mean of the distribution
                 mean, _ = torch.chunk(action_dist_inputs, 2, dim=-1)
                 actions[agent_id] = mean.squeeze(0).cpu().numpy()
 

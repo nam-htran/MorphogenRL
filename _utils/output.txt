@@ -334,20 +334,21 @@ WATCH:
   num_episodes: 5
 
 ===== .\configs\algorithms\acl_default.yaml =====
-run_id: "acl_from_ppo_5M_run"
+run_id: "acl_8h_final_gentle_start"
 
-total_stages: 2
-student_steps_per_stage: 100000 
+total_stages: 20
+student_steps_per_stage: 500000
 
-eval_episodes: 10
-mastery_threshold: 100.0
+eval_episodes: 20
+
+mastery_threshold: 3000.0
 
 dynamic_threshold_settings:
   enabled: true
-  offset: 50.0 
-  min_threshold: 120.0 
+  offset: 100.0
+  min_threshold: 2000.0 
 
-n_envs: 8
+n_envs: 80
 seed: 42
 
 difficulty_dims:
@@ -357,7 +358,7 @@ difficulty_dims:
   - creepers_height
   - creepers_spacing
 
-initial_difficulty: [0.1, 0.1, 0.2, 0.1, 0.9]
+initial_difficulty: [0.05, 0.05, 0.0, 0.0, 1.0]
 
 mastery_order:
   - input_vector_0
@@ -374,19 +375,19 @@ difficulty_increments:
   creepers_spacing: -0.05
 
 ppo_config:
-  learning_rate: 0.0001
-  buffer_size: 500000
-  batch_size: 256
+  learning_rate: 0.00003 
+  buffer_size: 2000000
+  batch_size: 1024
   ent_coef: 'auto'
   gamma: 0.99
-  learning_starts: 10000
+  learning_starts: 50000
 
 ===== .\configs\algorithms\marl_default.yaml =====
-run_id: "marl_interactive_from_ppo_5M_run"
+run_id: "marl_8h_run"
 mode: "interactive"
 n_agents: 2
 
-iterations: 2
+iterations: 250
 num_workers: 3
 num_gpus: 2
 
@@ -404,20 +405,18 @@ ppo_config:
     clip_param: 0.2
     entropy_coeff: 0.01
     train_batch_size: 32768
-  
   model:
-    fcnet_hiddens: [256, 256] 
+    fcnet_hiddens: [256, 256]
     fcnet_activation: "tanh"
-    
   env_runners:
     rollout_fragment_length: 1024
 
 ===== .\configs\algorithms\ppo_default.yaml =====
-run_id: "ppo_base_5M_run"
-total_timesteps: 100000
-save_freq: 50000
+run_id: "ppo_base_8h_run"
+total_timesteps: 34000000 
+save_freq: 2000000
 
-n_envs: 8
+n_envs: 80
 seed: 42
 
 reward_shaping:
@@ -432,11 +431,11 @@ reward_shaping:
 
 ppo_config:
   gamma: 0.995
-  n_steps: 8192
+  n_steps: 2048 
   ent_coef: 0.005
   learning_rate: 0.00005
   n_epochs: 10
-  batch_size: 256
+  batch_size: 1024 
   clip_range: 0.2
 
 ===== .\configs\environments\parkour_default.yaml =====
@@ -450,6 +449,30 @@ env_params:
   creepers_width: 0.25
   creepers_height: 2.0
   creepers_spacing: 1.5
+
+===== .\output\marl\marl_8h_run\rllib_checkpoint.json =====
+{"class_and_ctor_args_file": "class_and_ctor_args.pkl", "state_file": "algorithm_state", "ray_version": "2.50.1", "ray_commit": "7cf6817996f5304b5c808453a997fc1570dcde25", "checkpoint_version": "2.1"}
+
+===== .\output\marl\marl_8h_run\env_runner\metadata.json =====
+{"class_and_ctor_args_file": "class_and_ctor_args.pkl", "state_file": "state", "ray_version": "2.50.1", "ray_commit": "7cf6817996f5304b5c808453a997fc1570dcde25", "checkpoint_version": "2.1"}
+
+===== .\output\marl\marl_8h_run\env_runner\env_to_module_connector\metadata.json =====
+{"class_and_ctor_args_file": "class_and_ctor_args.pkl", "state_file": "state", "ray_version": "2.50.1", "ray_commit": "7cf6817996f5304b5c808453a997fc1570dcde25", "checkpoint_version": "2.1"}
+
+===== .\output\marl\marl_8h_run\env_runner\module_to_env_connector\metadata.json =====
+{"class_and_ctor_args_file": "class_and_ctor_args.pkl", "state_file": "state", "ray_version": "2.50.1", "ray_commit": "7cf6817996f5304b5c808453a997fc1570dcde25", "checkpoint_version": "2.1"}
+
+===== .\output\marl\marl_8h_run\learner_group\metadata.json =====
+{"class_and_ctor_args_file": "class_and_ctor_args.pkl", "state_file": "state", "ray_version": "2.50.1", "ray_commit": "7cf6817996f5304b5c808453a997fc1570dcde25", "checkpoint_version": "2.1"}
+
+===== .\output\marl\marl_8h_run\learner_group\learner\metadata.json =====
+{"class_and_ctor_args_file": "class_and_ctor_args.pkl", "state_file": "state", "ray_version": "2.50.1", "ray_commit": "7cf6817996f5304b5c808453a997fc1570dcde25", "checkpoint_version": "2.1"}
+
+===== .\output\marl\marl_8h_run\learner_group\learner\rl_module\metadata.json =====
+{"class_and_ctor_args_file": "class_and_ctor_args.pkl", "state_file": "module_state", "ray_version": "2.50.1", "ray_commit": "7cf6817996f5304b5c808453a997fc1570dcde25", "checkpoint_version": "2.1"}
+
+===== .\output\marl\marl_8h_run\learner_group\learner\rl_module\shared_policy\metadata.json =====
+{"class_and_ctor_args_file": "class_and_ctor_args.pkl", "state_file": "module_state", "ray_version": "2.50.1", "ray_commit": "7cf6817996f5304b5c808453a997fc1570dcde25", "checkpoint_version": "2.1"}
 
 ===== .\preprocessing\convert_weight.py =====
 import tensorflow as tf
@@ -1413,13 +1436,7 @@ def main(args):
         marl_test_config['num_workers'] = 0 
         marl_test_config['num_gpus'] = 0
 
-        # START CHANGE: Ghi đè các tham số step của thuật toán MARL
-        if 'ppo_config' in marl_test_config:
-            marl_test_config['ppo_config']['training']['train_batch_size'] = 256
-            if 'env_runners' in marl_test_config['ppo_config']:
-                 marl_test_config['ppo_config']['env_runners']['rollout_fragment_length'] = 128
-        # END CHANGE
-        
+
         marl_args = SimpleNamespace(**marl_test_config)
 
         _, success = run_test(lambda: ray_init_and_run(train_marl.main, marl_args), "MARL Micro-Training")
@@ -1822,29 +1839,41 @@ def main(args: argparse.Namespace) -> Optional[str]:
         return best_checkpoint_path
     else:
         print(f"Starting a single MARL training run for {args.iterations} iterations...")
-        algo = config.build()
-        output_dir = os.path.abspath(os.path.join("output", "marl", args.run_id)); os.makedirs(output_dir, exist_ok=True)
-        print(f"Checkpoints will be saved to: {output_dir}")
-        print(f"TensorBoard logs will be saved under: {algo.logdir}")
-
-        best_reward, checkpoint_path_to_return = -float('inf'), None
-        for i in range(args.iterations):
-            result = algo.train()
-            env_runner_results, learner_results = result.get(ENV_RUNNER_RESULTS, {}), result.get(LEARNER_RESULTS, {})
-            episode_reward_mean = env_runner_results.get(EPISODE_RETURN_MEAN, float("nan"))
-            
-            if episode_reward_mean > best_reward:
-                best_reward = episode_reward_mean
-                checkpoint_result = algo.save(checkpoint_dir=output_dir)
-                checkpoint_path_to_return = checkpoint_result.checkpoint.path
-                print(f"\nNew best average reward: {best_reward:.2f}. Checkpoint saved at: {checkpoint_path_to_return}")
-            
-            per_policy_rewards = env_runner_results.get("module_episode_returns_mean", {})
-            total_loss_per_module = {mid: stats.get("total_loss", float("nan")) for mid, stats in learner_results.items() if mid != ALL_MODULES}
-            
-            print(f"Iter {i + 1}/{args.iterations}: Mean Reward: {episode_reward_mean:.2f}, Policy Rewards: {per_policy_rewards}, Module Loss: {total_loss_per_module}")
         
-        print(f"\nTraining complete. Best checkpoint saved at: {checkpoint_path_to_return}")
+        # START CHANGE: Sử dụng try...finally để đảm bảo algo.stop() được gọi
+        algo = None
+        checkpoint_path_to_return = None
+        try:
+            algo = config.build()
+            output_dir = os.path.abspath(os.path.join("output", "marl", args.run_id)); os.makedirs(output_dir, exist_ok=True)
+            print(f"Checkpoints will be saved to: {output_dir}")
+            print(f"TensorBoard logs will be saved under: {algo.logdir}")
+
+            best_reward = -float('inf')
+            for i in range(args.iterations):
+                result = algo.train()
+                env_runner_results, learner_results = result.get(ENV_RUNNER_RESULTS, {}), result.get(LEARNER_RESULTS, {})
+                episode_reward_mean = env_runner_results.get(EPISODE_RETURN_MEAN, float("nan"))
+                
+                if episode_reward_mean > best_reward:
+                    best_reward = episode_reward_mean
+                    checkpoint_result = algo.save(checkpoint_dir=output_dir)
+                    checkpoint_path_to_return = checkpoint_result.checkpoint.path
+                    print(f"\nNew best average reward: {best_reward:.2f}. Checkpoint saved at: {checkpoint_path_to_return}")
+                
+                per_policy_rewards = env_runner_results.get("module_episode_returns_mean", {})
+                total_loss_per_module = {mid: stats.get("total_loss", float("nan")) for mid, stats in learner_results.items() if mid != ALL_MODULES}
+                
+                print(f"Iter {i + 1}/{args.iterations}: Mean Reward: {episode_reward_mean:.2f}, Policy Rewards: {per_policy_rewards}, Module Loss: {total_loss_per_module}")
+            
+            print(f"\nTraining complete. Best checkpoint saved at: {checkpoint_path_to_return}")
+        finally:
+            # Luôn gọi stop() để dọn dẹp các worker một cách an toàn
+            if algo:
+                algo.stop()
+                print("RLlib algorithm stopped gracefully.")
+        # END CHANGE
+        
         return checkpoint_path_to_return
 
 ===== .\scripts\train_ppo.py =====
@@ -2801,36 +2830,81 @@ from TeachMyAgent.environments.envs.Box2D_dynamics.climbing_dynamics import Clim
 from TeachMyAgent.environments.envs.PCGAgents.CPPN.cppn_pytorch import CPPN_Pytorch
 from TeachMyAgent.environments.envs.bodies.BodiesEnum import BodiesEnum
 from TeachMyAgent.environments.envs.bodies.BodyTypesEnum import BodyTypesEnum
-from TeachMyAgent.environments.envs.utils.custom_user_data import CustomUserDataObjectTypes, CustomUserData
+from TeachMyAgent.environments.envs.utils.custom_user_data import (
+    CustomUserDataObjectTypes, 
+    CustomUserData, 
+    CustomBodyUserData, 
+    CustomMotorUserData, 
+    CustomBodySensorUserData
+)
 
 class ContactDetector(WaterContactDetector, ClimbingContactDetector):
     def __init__(self, env):
-        super(ContactDetector, self).__init__(); self.env = env
+        # Gọi tất cả các hàm __init__ của lớp cha một cách tường minh
+        WaterContactDetector.__init__(self)
+        ClimbingContactDetector.__init__(self)
+        self.env = env
+
     def BeginContact(self, contact):
         fA, fB = contact.fixtureA, contact.fixtureB
-        if (not hasattr(fA, 'body') or not hasattr(fB, 'body') or fA.body is None or fB.body is None or not hasattr(fA.body, 'userData') or not hasattr(fB.body, 'userData') or fA.body.userData is None or fB.body.userData is None or not hasattr(fA.body.userData, 'object_type') or not hasattr(fB.body.userData, 'object_type')): return
-        bodies = [contact.fixtureA.body, contact.fixtureB.body]
-        if any([body.userData.object_type == CustomUserDataObjectTypes.WATER for body in bodies]): WaterContactDetector.BeginContact(self, contact)
+        
+        # Kiểm tra an toàn toàn diện: đảm bảo body và userData tồn tại và đúng loại
+        if not all(hasattr(f, 'body') and f.body and hasattr(f.body, 'userData') and 
+                   isinstance(f.body.userData, CustomUserData) for f in [fA, fB]):
+            return
+
+        bodies = [fA.body, fB.body]
+        if any(body.userData.object_type == CustomUserDataObjectTypes.WATER for body in bodies):
+            WaterContactDetector.BeginContact(self, contact)
+
     def EndContact(self, contact):
         fA, fB = contact.fixtureA, contact.fixtureB
-        if (not hasattr(fA, 'body') or not hasattr(fB, 'body') or fA.body is None or fB.body is None or not hasattr(fA.body, 'userData') or not hasattr(fB.body, 'userData') or fA.body.userData is None or fB.body.userData is None or not hasattr(fA.body.userData, 'object_type') or not hasattr(fB.body.userData, 'object_type')): return
+        
+        # Kiểm tra an toàn toàn diện: đảm bảo body và userData tồn tại và đúng loại
+        if not all(hasattr(f, 'body') and f.body and hasattr(f.body, 'userData') and 
+                   isinstance(f.body.userData, CustomUserData) for f in [fA, fB]):
+            return
+        
         bodies = [fA.body, fB.body]
-        if any([body.userData.object_type == CustomUserDataObjectTypes.WATER for body in bodies]): WaterContactDetector.EndContact(self, contact)
-        elif any([body.userData.object_type == CustomUserDataObjectTypes.BODY_SENSOR for body in bodies]): ClimbingContactDetector.EndContact(self, contact)
+        
+        is_water_contact = any(
+            isinstance(body.userData, CustomUserData) and body.userData.object_type == CustomUserDataObjectTypes.WATER 
+            for body in bodies
+        )
+        is_sensor_contact = any(
+            isinstance(body.userData, CustomUserData) and body.userData.object_type == CustomUserDataObjectTypes.BODY_SENSOR 
+            for body in bodies
+        )
+
+        if is_water_contact:
+            WaterContactDetector.EndContact(self, contact)
+        elif is_sensor_contact:
+            ClimbingContactDetector.EndContact(self, contact)
         else:
             for body in bodies:
-                if (hasattr(body.userData, 'object_type') and body.userData.object_type == CustomUserDataObjectTypes.BODY_OBJECT and body.userData.check_contact): body.userData.has_contact = False
+                if (isinstance(body.userData, CustomBodyUserData) and 
+                    body.userData.object_type == CustomUserDataObjectTypes.BODY_OBJECT and 
+                    body.userData.check_contact):
+                    body.userData.has_contact = False
+
     def Reset(self):
-        WaterContactDetector.Reset(self); ClimbingContactDetector.Reset(self)
+        WaterContactDetector.Reset(self)
+        ClimbingContactDetector.Reset(self)
 
 class LidarCallback(Box2D.b2.rayCastCallback):
     def __init__(self, agent_mask_filter):
-        Box2D.b2.rayCastCallback.__init__(self); self.agent_mask_filter = agent_mask_filter; self.fixture = None; self.is_water_detected = False; self.is_creeper_detected = False
+        Box2D.b2.rayCastCallback.__init__(self)
+        self.agent_mask_filter = agent_mask_filter
+        self.fixture = None
+        self.is_water_detected = False
+        self.is_creeper_detected = False
     def ReportFixture(self, fixture, point, normal, fraction):
         if (fixture.filterData.categoryBits & self.agent_mask_filter) == 0: return -1
-        self.p2 = point; self.fraction = fraction
-        if hasattr(fixture.body.userData, 'object_type'):
-            self.is_water_detected = fixture.body.userData.object_type == CustomUserDataObjectTypes.WATER; self.is_creeper_detected = fixture.body.userData.object_type == CustomUserDataObjectTypes.SENSOR_GRIP_TERRAIN
+        self.p2 = point
+        self.fraction = fraction
+        if hasattr(fixture, 'body') and fixture.body and hasattr(fixture.body, 'userData') and isinstance(fixture.body.userData, CustomUserData):
+            self.is_water_detected = fixture.body.userData.object_type == CustomUserDataObjectTypes.WATER
+            self.is_creeper_detected = fixture.body.userData.object_type == CustomUserDataObjectTypes.SENSOR_GRIP_TERRAIN
         return fraction
         
 FPS=50; SCALE=30.0; VIEWPORT_W=600; VIEWPORT_H=400; NB_LIDAR=10; LIDAR_RANGE=160/SCALE; INITIAL_RANDOM=5; TERRAIN_STEP=14/SCALE; TERRAIN_LENGTH=200; TERRAIN_HEIGHT=VIEWPORT_H/SCALE/4; TERRAIN_END=5; INITIAL_TERRAIN_STARTPAD=20; FRICTION=2.5; WATER_DENSITY=1.0; HULL_CONTACT_PENALTY=0.1
@@ -2851,10 +2925,8 @@ class ParametricContinuousParkour(gym.Env, EzPickle):
         self.ts = 0
         self.flip_termination_steps = flip_termination_steps
         
-        # All kwargs are now potential reward shaping parameters
         self.reward_params = kwargs.copy()
         
-        # Set default values for any reward params not provided in kwargs
         default_rewards = {
             'progress_multiplier': 130.0, 'velocity_multiplier': 0.3, 
             'torque_penalty_multiplier': 40.0, 'alive_bonus': 0.0,
@@ -2881,7 +2953,6 @@ class ParametricContinuousParkour(gym.Env, EzPickle):
 
         body_type = BodiesEnum.get_body_type(agent_body_type)
         
-        # The body constructor does not need reward params
         body_constructor_args = {}
         if body_type in [BodyTypesEnum.SWIMMER, BodyTypesEnum.AMPHIBIAN]:
             body_constructor_args['density'] = WATER_DENSITY
@@ -3025,21 +3096,15 @@ class ParametricContinuousParkour(gym.Env, EzPickle):
         reward = 0
         info = {}
 
-        # Progress and velocity rewards
         shaping = self.reward_params['progress_multiplier'] * pos[0] / SCALE 
         if self.prev_shaping is not None: reward += shaping - self.prev_shaping
         self.prev_shaping = shaping
         reward += self.reward_params['velocity_multiplier'] * vel.x
         
-        # --- START: NEW FOOT AIR-TIME & GAIT BONUS ---
-        # Only apply these bonuses for bipedal walkers with 4 motors
         if self.agent_body.body_type == BodyTypesEnum.WALKER and len(self.agent_body.motors) == 4:
-            # Assuming right leg motors are 0 (hip) and 1 (knee), left are 2 (hip) and 3 (knee)
-            # The foot is the contact_body of the knee motor
             right_foot = self.agent_body.motors[1].userData.contact_body
             left_foot = self.agent_body.motors[3].userData.contact_body
             
-            # Reward for lifting a foot off the ground
             air_time_bonus = 0.0
             if not right_foot.userData.has_contact:
                 air_time_bonus += self.reward_params.get('foot_air_time_bonus', 0.0)
@@ -3047,16 +3112,11 @@ class ParametricContinuousParkour(gym.Env, EzPickle):
                 air_time_bonus += self.reward_params.get('foot_air_time_bonus', 0.0)
             reward += air_time_bonus
             
-            # Reward for alternating leg movement (gait)
-            # Check the speed of the hip joints
             right_hip_speed = self.agent_body.motors[0].speed
             left_hip_speed = self.agent_body.motors[2].speed
-            # If hip speeds have opposite signs, they are moving in opposite directions (good gait)
             if right_hip_speed * left_hip_speed < 0:
                 reward += self.reward_params.get('gait_bonus', 0.0)
-        # --- END: NEW FOOT AIR-TIME & GAIT BONUS ---
         
-        # Knee-based standing bonus
         if self.reward_params.get('standing_bonus_multiplier', 0.0) > 0 and not is_under_water:
             if len(self.agent_body.motors) >= 2:
                 knee_joints = self.agent_body.motors[-2:] 
@@ -3067,7 +3127,6 @@ class ParametricContinuousParkour(gym.Env, EzPickle):
                 knee_straight_bonus /= len(knee_joints)
                 reward += self.reward_params['standing_bonus_multiplier'] * knee_straight_bonus
 
-        # Penalties
         reward -= self.reward_params['body_angle_penalty'] * abs(state[0])
         
         ground_y = TERRAIN_HEIGHT
@@ -3082,12 +3141,10 @@ class ParametricContinuousParkour(gym.Env, EzPickle):
         torque_penalty = sum(self.agent_body.TORQUE_PENALTY * self.reward_params['torque_penalty_multiplier'] * np.clip(np.abs(a), 0, 1) for a in action)
         reward -= torque_penalty
         
-        # Stagnation penalty
         if abs(pos.x - self.last_progress_x) < 0.01: self.stagnation_counter += 1
         else: self.stagnation_counter = 0; self.last_progress_x = pos.x
         if self.stagnation_counter > 100: reward -= self.reward_params['stagnation_penalty']
         
-        # Termination conditions
         terminated = False
         is_fall = False
         if abs(state[0]) > 1.5: self.flipped_counter += 1
@@ -6346,10 +6403,8 @@ from Box2D.b2 import (edgeShape, circleShape, fixtureDef, polygonShape, revolute
 from TeachMyAgent.environments.envs.utils.custom_user_data import CustomUserDataObjectTypes
 
 class ClimbingDynamics(object):
-    # START FIX: Add __init__ to create a list for joints that need to be destroyed
     def __init__(self):
         self.joints_to_destroy = []
-    # END FIX
         
     def before_step_climbing_dynamics(self, actions, body, world):
         '''
@@ -6369,21 +6424,15 @@ class ClimbingDynamics(object):
                     joint_to_destroy = next((_joint.joint for _joint in sensor_to_check.joints
                                              if isinstance(_joint.joint, Box2D.b2RevoluteJoint)), None)
                     if joint_to_destroy is not None:
-                        # START FIX: Defer joint destruction instead of immediate removal
-                        # The old line which caused crashes: world.DestroyJoint(joint_to_destroy)
                         self.joints_to_destroy.append(joint_to_destroy)
-                        # END FIX
 
     def after_step_climbing_dynamics(self, contact_detector, world):
         '''
         Safely destroy marked joints and create new climbing joints if sensors are still overlapping.
         '''
-        # START FIX: Safely destroy all joints marked for removal after world.Step()
-        # This is the correct and safe way to modify the physics world.
         for joint in self.joints_to_destroy:
             world.DestroyJoint(joint)
-        self.joints_to_destroy.clear() # Clean up the list
-        # END FIX
+        self.joints_to_destroy.clear()
         
         for sensor in contact_detector.contact_dictionaries:
             if len(contact_detector.contact_dictionaries[sensor]) > 0 and \
@@ -6411,6 +6460,7 @@ class ClimbingDynamics(object):
                     contact_detector.contact_dictionaries[sensor].remove(other_body)
                     if len(contact_detector.contact_dictionaries[sensor]) == 0:
                         sensor.userData.has_contact = False
+
 class ClimbingContactDetector(contactListener):
     '''
     Stores contacts between sensors and graspable surfaces.
@@ -6437,10 +6487,12 @@ class ClimbingContactDetector(contactListener):
     def EndContact(self, contact):
         fA, fB = contact.fixtureA, contact.fixtureB
 
+        # START FIX: Thêm các bước kiểm tra an toàn toàn diện
         if not (hasattr(fA, 'body') and hasattr(fB, 'body') and fA.body and fB.body and
                 hasattr(fA.body, 'userData') and hasattr(fB.body, 'userData') and
                 fA.body.userData and fB.body.userData):
             return
+        # END FIX
 
         bodies = [fA.body, fB.body]
         for idx, body in enumerate(bodies):
@@ -6650,7 +6702,7 @@ class WaterContactDetector(contactListener):
         '''Safely remove fixture pairs when contact ends.'''
         fA, fB = contact.fixtureA, contact.fixtureB
 
-        # START FIX: Added safety checks to prevent crashes from destroyed bodies
+        # START FIX: Thêm các bước kiểm tra an toàn toàn diện để ngăn lỗi sập
         if not (hasattr(fA, 'body') and hasattr(fB, 'body') and fA.body and fB.body and
                 hasattr(fA.body, 'userData') and hasattr(fB.body, 'userData') and
                 fA.body.userData and fB.body.userData):
@@ -7637,209 +7689,91 @@ def add_render_args(parser):
             parkour_default.yaml
     output/
         acl/
-            acl_from_ppo_5M_run/
+            acl_8h_final_gentle_start/
                 student_final.zip
                 vecnormalize.pkl
                 logs/
                     SAC_0/
-                        events.out.tfevents.1762395914.HoangNam.9296.1
-                        events.out.tfevents.1762396262.HoangNam.7080.1
-                        events.out.tfevents.1762396393.HoangNam.7080.2
-                        events.out.tfevents.1762397036.HoangNam.9968.1
-                        events.out.tfevents.1762397191.HoangNam.9968.2
-                        events.out.tfevents.1762397822.HoangNam.21328.1
-                        events.out.tfevents.1762397992.HoangNam.21328.2
-                        events.out.tfevents.1762398503.HoangNam.15812.1
-                        events.out.tfevents.1762398693.HoangNam.15812.2
-                        events.out.tfevents.1762399109.HoangNam.9564.1
-                        events.out.tfevents.1762399290.HoangNam.9564.2
-                        events.out.tfevents.1762404314.HoangNam.19824.1
-                        events.out.tfevents.1762404622.HoangNam.19824.2
+                        events.out.tfevents.1762595162.3c44bdfa7d3c.1038.1
+                        events.out.tfevents.1762595515.3c44bdfa7d3c.1038.2
+                        events.out.tfevents.1762595867.3c44bdfa7d3c.1038.3
+                        events.out.tfevents.1762596216.3c44bdfa7d3c.1038.4
+                        events.out.tfevents.1762596566.3c44bdfa7d3c.1038.5
+                        events.out.tfevents.1762596917.3c44bdfa7d3c.1038.6
+                        events.out.tfevents.1762597269.3c44bdfa7d3c.1038.7
+                        events.out.tfevents.1762597619.3c44bdfa7d3c.1038.8
+                        events.out.tfevents.1762597969.3c44bdfa7d3c.1038.9
+                        events.out.tfevents.1762598319.3c44bdfa7d3c.1038.10
+                        events.out.tfevents.1762598672.3c44bdfa7d3c.1038.11
+                        events.out.tfevents.1762599017.3c44bdfa7d3c.1038.12
+                        events.out.tfevents.1762599370.3c44bdfa7d3c.1038.13
+                        events.out.tfevents.1762599716.3c44bdfa7d3c.1038.14
+                        events.out.tfevents.1762600063.3c44bdfa7d3c.1038.15
+                        events.out.tfevents.1762600394.3c44bdfa7d3c.1038.16
+                        events.out.tfevents.1762600725.3c44bdfa7d3c.1038.17
+                        events.out.tfevents.1762601051.3c44bdfa7d3c.1038.18
+                        events.out.tfevents.1762601374.3c44bdfa7d3c.1038.19
+                        events.out.tfevents.1762601696.3c44bdfa7d3c.1038.20
                 models/
-                    student_stage_2.zip
-            acl_generalist_8h_run/
-                student_final.zip
-                vecnormalize.pkl
-                logs/
-                    SAC_0/
-                        events.out.tfevents.1762294139.151b7de8ab89.1038.1
-            test_suite_acl/
-                student_final.zip
-                vecnormalize.pkl
-                logs/
-                    SAC_0/
-                        events.out.tfevents.1762367387.HoangNam.21076.1
-                        events.out.tfevents.1762367418.HoangNam.11792.1
-                        events.out.tfevents.1762367792.HoangNam.21356.1
-                        events.out.tfevents.1762367894.HoangNam.2468.1
-                        events.out.tfevents.1762368056.HoangNam.788.1
-                        events.out.tfevents.1762368164.HoangNam.7508.1
-                        events.out.tfevents.1762368268.HoangNam.20052.1
-                        events.out.tfevents.1762368366.HoangNam.13404.1
-                        events.out.tfevents.1762368471.HoangNam.20676.1
-                        events.out.tfevents.1762368974.HoangNam.11776.1
-                        events.out.tfevents.1762369136.HoangNam.15632.1
-                        events.out.tfevents.1762369316.HoangNam.17148.1
-                        events.out.tfevents.1762394559.HoangNam.2956.1
-                        events.out.tfevents.1762394930.HoangNam.16428.1
-                        events.out.tfevents.1762395126.HoangNam.18204.1
-                        events.out.tfevents.1762395675.HoangNam.16248.1
-                models/
-                    student_stage_1.zip
-            test_suite_pipeline_acl/
-                student_final.zip
-                vecnormalize.pkl
-                logs/
-                    SAC_0/
-                        events.out.tfevents.1762366620.HoangNam.1592.1
-                        events.out.tfevents.1762366791.HoangNam.12800.1
-                        events.out.tfevents.1762366791.HoangNam.12800.2
-                        events.out.tfevents.1762366966.HoangNam.19132.1
-                        events.out.tfevents.1762366967.HoangNam.19132.2
-                        events.out.tfevents.1762367023.HoangNam.3196.1
-                        events.out.tfevents.1762367024.HoangNam.3196.2
-                        events.out.tfevents.1762367209.HoangNam.5392.1
-                        events.out.tfevents.1762367210.HoangNam.5392.2
-                        events.out.tfevents.1762367339.HoangNam.1760.1
-                        events.out.tfevents.1762367340.HoangNam.1760.2
-                models/
-                    student_stage_2.zip
+                    student_stage_10.zip
+                    student_stage_20.zip
         marl/
-            marl_interactive_from_ppo_5M_run/
-            test_suite_marl/
-            test_suite_pipeline_marl/
+            marl_8h_run/
+                algorithm_state.pkl
+                class_and_ctor_args.pkl
+                rllib_checkpoint.json
+                env_runner/
+                    class_and_ctor_args.pkl
+                    metadata.json
+                    state.pkl
+                    env_to_module_connector/
+                        class_and_ctor_args.pkl
+                        metadata.json
+                        state.pkl
+                    module_to_env_connector/
+                        class_and_ctor_args.pkl
+                        metadata.json
+                        state.pkl
+                learner_group/
+                    class_and_ctor_args.pkl
+                    metadata.json
+                    state.pkl
+                    learner/
+                        class_and_ctor_args.pkl
+                        metadata.json
+                        state.pkl
+                        rl_module/
+                            class_and_ctor_args.pkl
+                            metadata.json
+                            module_state.pkl
+                            shared_policy/
+                                class_and_ctor_args.pkl
+                                metadata.json
+                                module_state.pkl
         ppo/
-            ppo_base_5M_run/
-                vecnormalize.pkl
-                logs/
-                    PPO_1/
-                        events.out.tfevents.1762395763.HoangNam.17468.0
-                    PPO_2/
-                        events.out.tfevents.1762395864.HoangNam.9296.0
-                    PPO_3/
-                        events.out.tfevents.1762396212.HoangNam.7080.0
-                    PPO_4/
-                        events.out.tfevents.1762396981.HoangNam.9968.0
-                    PPO_5/
-                        events.out.tfevents.1762397748.HoangNam.20532.0
-                    PPO_6/
-                        events.out.tfevents.1762397773.HoangNam.21328.0
-                    PPO_7/
-                        events.out.tfevents.1762398444.HoangNam.15812.0
-                    PPO_8/
-                        events.out.tfevents.1762399054.HoangNam.9564.0
-                    PPO_9/
-                        events.out.tfevents.1762404229.HoangNam.19824.0
-                models/
-                    ppo_model_100000_steps.zip
-                    ppo_model_50000_steps.zip
-                    ppo_model_final.zip
             ppo_base_8h_run/
                 vecnormalize.pkl
                 logs/
                     PPO_1/
-                        events.out.tfevents.1762293450.151b7de8ab89.1038.0
-                    PPO_10/
-                        events.out.tfevents.1762353446.HoangNam.16220.0
-                    PPO_11/
-                        events.out.tfevents.1762354205.HoangNam.16860.0
-                    PPO_12/
-                        events.out.tfevents.1762354973.HoangNam.19080.0
-                    PPO_13/
-                        events.out.tfevents.1762355848.HoangNam.5448.0
-                    PPO_14/
-                        events.out.tfevents.1762356721.HoangNam.9880.0
-                    PPO_15/
-                        events.out.tfevents.1762357512.HoangNam.2548.0
-                    PPO_16/
-                        events.out.tfevents.1762358160.HoangNam.10892.0
-                    PPO_17/
-                        events.out.tfevents.1762358626.HoangNam.14748.0
-                    PPO_18/
-                        events.out.tfevents.1762359087.HoangNam.8872.0
-                    PPO_19/
-                        events.out.tfevents.1762359637.HoangNam.6332.0
-                    PPO_2/
-                        events.out.tfevents.1762342615.HoangNam.9208.0
-                    PPO_20/
-                        events.out.tfevents.1762360093.HoangNam.16252.0
-                    PPO_21/
-                        events.out.tfevents.1762360545.HoangNam.18080.0
-                    PPO_22/
-                        events.out.tfevents.1762360982.HoangNam.6872.0
-                    PPO_3/
-                        events.out.tfevents.1762343478.HoangNam.19168.0
-                    PPO_4/
-                        events.out.tfevents.1762344338.HoangNam.14028.0
-                    PPO_5/
-                        events.out.tfevents.1762346167.HoangNam.6728.0
-                    PPO_6/
-                        events.out.tfevents.1762347083.HoangNam.6224.0
-                    PPO_7/
-                        events.out.tfevents.1762347947.HoangNam.9916.0
-                    PPO_8/
-                        events.out.tfevents.1762348881.HoangNam.7424.0
-                    PPO_9/
-                        events.out.tfevents.1762351951.HoangNam.15532.0
+                        events.out.tfevents.1762581972.3c44bdfa7d3c.1038.0
                 models/
-                    ppo_model_1000000_steps.zip
-                    ppo_model_250000_steps.zip
-                    ppo_model_500000_steps.zip
-                    ppo_model_750000_steps.zip
-                    ppo_model_final.zip
-            test_suite_pipeline_ppo/
-                vecnormalize.pkl
-                logs/
-                    PPO_1/
-                        events.out.tfevents.1762366620.HoangNam.1592.0
-                    PPO_2/
-                        events.out.tfevents.1762366790.HoangNam.12800.0
-                    PPO_3/
-                        events.out.tfevents.1762366965.HoangNam.19132.0
-                    PPO_4/
-                        events.out.tfevents.1762367022.HoangNam.3196.0
-                    PPO_5/
-                        events.out.tfevents.1762367209.HoangNam.5392.0
-                    PPO_6/
-                        events.out.tfevents.1762367339.HoangNam.1760.0
-                models/
-                    ppo_model_final.zip
-            test_suite_ppo/
-                vecnormalize.pkl
-                logs/
-                    PPO_1/
-                        events.out.tfevents.1762367387.HoangNam.21076.0
-                    PPO_10/
-                        events.out.tfevents.1762368938.HoangNam.11776.0
-                    PPO_11/
-                        events.out.tfevents.1762369101.HoangNam.15632.0
-                    PPO_12/
-                        events.out.tfevents.1762369306.HoangNam.17148.0
-                    PPO_13/
-                        events.out.tfevents.1762394548.HoangNam.2956.0
-                    PPO_14/
-                        events.out.tfevents.1762394919.HoangNam.16428.0
-                    PPO_15/
-                        events.out.tfevents.1762395116.HoangNam.18204.0
-                    PPO_16/
-                        events.out.tfevents.1762395663.HoangNam.16248.0
-                    PPO_2/
-                        events.out.tfevents.1762367418.HoangNam.11792.0
-                    PPO_3/
-                        events.out.tfevents.1762367791.HoangNam.21356.0
-                    PPO_4/
-                        events.out.tfevents.1762367892.HoangNam.2468.0
-                    PPO_5/
-                        events.out.tfevents.1762368054.HoangNam.788.0
-                    PPO_6/
-                        events.out.tfevents.1762368162.HoangNam.7508.0
-                    PPO_7/
-                        events.out.tfevents.1762368267.HoangNam.20052.0
-                    PPO_8/
-                        events.out.tfevents.1762368365.HoangNam.13404.0
-                    PPO_9/
-                        events.out.tfevents.1762368470.HoangNam.20676.0
-                models/
+                    ppo_model_10000000_steps.zip
+                    ppo_model_12000000_steps.zip
+                    ppo_model_14000000_steps.zip
+                    ppo_model_16000000_steps.zip
+                    ppo_model_18000000_steps.zip
+                    ppo_model_20000000_steps.zip
+                    ppo_model_2000000_steps.zip
+                    ppo_model_22000000_steps.zip
+                    ppo_model_24000000_steps.zip
+                    ppo_model_26000000_steps.zip
+                    ppo_model_28000000_steps.zip
+                    ppo_model_30000000_steps.zip
+                    ppo_model_32000000_steps.zip
+                    ppo_model_34000000_steps.zip
+                    ppo_model_4000000_steps.zip
+                    ppo_model_6000000_steps.zip
+                    ppo_model_8000000_steps.zip
                     ppo_model_final.zip
     preprocessing/
         convert_weight.py

@@ -15,27 +15,27 @@ from TeachMyAgent.environments.envs.PCGAgents.CPPN.cppn_pytorch import CPPN_Pyto
 from TeachMyAgent.environments.envs.bodies.BodiesEnum import BodiesEnum
 from TeachMyAgent.environments.envs.bodies.BodyTypesEnum import BodyTypesEnum
 from TeachMyAgent.environments.envs.utils.custom_user_data import (
-    CustomUserDataObjectTypes, 
-    CustomUserData, 
-    CustomBodyUserData, 
-    CustomMotorUserData, 
+    CustomUserDataObjectTypes,
+    CustomUserData,
+    CustomBodyUserData,
+    CustomMotorUserData,
     CustomBodySensorUserData
 )
 
 class ContactDetector(WaterContactDetector, ClimbingContactDetector):
     def __init__(self, env):
-        # Gọi tất cả các hàm __init__ của lớp cha một cách tường minh
         WaterContactDetector.__init__(self)
         ClimbingContactDetector.__init__(self)
         self.env = env
 
     def BeginContact(self, contact):
         fA, fB = contact.fixtureA, contact.fixtureB
-        
-        # Kiểm tra an toàn toàn diện: đảm bảo body và userData tồn tại và đúng loại
-        if not all(hasattr(f, 'body') and f.body and hasattr(f.body, 'userData') and 
+
+        # START FIX: Comprehensive safety check
+        if not all(hasattr(f, 'body') and f.body and hasattr(f.body, 'userData') and
                    isinstance(f.body.userData, CustomUserData) for f in [fA, fB]):
             return
+        # END FIX
 
         bodies = [fA.body, fB.body]
         if any(body.userData.object_type == CustomUserDataObjectTypes.WATER for body in bodies):
@@ -43,20 +43,21 @@ class ContactDetector(WaterContactDetector, ClimbingContactDetector):
 
     def EndContact(self, contact):
         fA, fB = contact.fixtureA, contact.fixtureB
-        
-        # Kiểm tra an toàn toàn diện: đảm bảo body và userData tồn tại và đúng loại
-        if not all(hasattr(f, 'body') and f.body and hasattr(f.body, 'userData') and 
+
+        # START FIX: Comprehensive safety check
+        if not all(hasattr(f, 'body') and f.body and hasattr(f.body, 'userData') and
                    isinstance(f.body.userData, CustomUserData) for f in [fA, fB]):
             return
-        
+        # END FIX
+
         bodies = [fA.body, fB.body]
-        
+
         is_water_contact = any(
-            isinstance(body.userData, CustomUserData) and body.userData.object_type == CustomUserDataObjectTypes.WATER 
+            body.userData.object_type == CustomUserDataObjectTypes.WATER
             for body in bodies
         )
         is_sensor_contact = any(
-            isinstance(body.userData, CustomUserData) and body.userData.object_type == CustomUserDataObjectTypes.BODY_SENSOR 
+            body.userData.object_type == CustomUserDataObjectTypes.BODY_SENSOR
             for body in bodies
         )
 
@@ -66,8 +67,8 @@ class ContactDetector(WaterContactDetector, ClimbingContactDetector):
             ClimbingContactDetector.EndContact(self, contact)
         else:
             for body in bodies:
-                if (isinstance(body.userData, CustomBodyUserData) and 
-                    body.userData.object_type == CustomUserDataObjectTypes.BODY_OBJECT and 
+                if (isinstance(body.userData, CustomBodyUserData) and
+                    body.userData.object_type == CustomUserDataObjectTypes.BODY_OBJECT and
                     body.userData.check_contact):
                     body.userData.has_contact = False
 
@@ -90,7 +91,7 @@ class LidarCallback(Box2D.b2.rayCastCallback):
             self.is_water_detected = fixture.body.userData.object_type == CustomUserDataObjectTypes.WATER
             self.is_creeper_detected = fixture.body.userData.object_type == CustomUserDataObjectTypes.SENSOR_GRIP_TERRAIN
         return fraction
-        
+
 FPS=50; SCALE=30.0; VIEWPORT_W=600; VIEWPORT_H=400; NB_LIDAR=10; LIDAR_RANGE=160/SCALE; INITIAL_RANDOM=5; TERRAIN_STEP=14/SCALE; TERRAIN_LENGTH=200; TERRAIN_HEIGHT=VIEWPORT_H/SCALE/4; TERRAIN_END=5; INITIAL_TERRAIN_STARTPAD=20; FRICTION=2.5; WATER_DENSITY=1.0; HULL_CONTACT_PENALTY=0.1
 
 class ParametricContinuousParkour(gym.Env, EzPickle):
@@ -108,11 +109,11 @@ class ParametricContinuousParkour(gym.Env, EzPickle):
         self.horizon = horizon
         self.ts = 0
         self.flip_termination_steps = flip_termination_steps
-        
+
         self.reward_params = kwargs.copy()
-        
+
         default_rewards = {
-            'progress_multiplier': 130.0, 'velocity_multiplier': 0.3, 
+            'progress_multiplier': 130.0, 'velocity_multiplier': 0.3,
             'torque_penalty_multiplier': 40.0, 'alive_bonus': 0.0,
             'stagnation_penalty': 0.1, 'grasp_bonus': 0.02,
             'hull_contact_penalty': HULL_CONTACT_PENALTY, 'body_angle_penalty': 0.0,
@@ -136,11 +137,11 @@ class ParametricContinuousParkour(gym.Env, EzPickle):
         self.climbing_dynamics = ClimbingDynamics()
 
         body_type = BodiesEnum.get_body_type(agent_body_type)
-        
+
         body_constructor_args = {}
         if body_type in [BodyTypesEnum.SWIMMER, BodyTypesEnum.AMPHIBIAN]:
             body_constructor_args['density'] = WATER_DENSITY
-        
+
         self.agent_body = BodiesEnum[agent_body_type].value(scale=SCALE, **body_constructor_args)
 
         self.terrain = []
@@ -172,7 +173,7 @@ class ParametricContinuousParkour(gym.Env, EzPickle):
             total_obs_size += len(self.agent_body.get_sensors_state())
         high = np.array([np.inf]*total_obs_size)
         self.observation_space = spaces.Box(-high, high, dtype=np.float32)
-    
+
     def _create_terrain_fixtures(self):
         self.fd_polygon = fixtureDef(shape=polygonShape(vertices=[(0,0),(1,0),(1,-1),(0,-1)]), friction=FRICTION)
         self.fd_edge = fixtureDef(shape=edgeShape(vertices=[(0,0),(1,1)]), friction=FRICTION)
@@ -264,46 +265,46 @@ class ParametricContinuousParkour(gym.Env, EzPickle):
         if hasattr(self.agent_body, "nb_steps_can_survive_outside_water") and self.nb_steps_outside_water > self.agent_body.nb_steps_can_survive_outside_water: is_agent_dead = True
         if hasattr(self.agent_body, "nb_steps_can_survive_under_water") and self.nb_steps_under_water > self.agent_body.nb_steps_can_survive_under_water: is_agent_dead = True
         if is_agent_dead: action = np.array([0] * self.action_space.shape[0])
-        
+
         self.agent_body.activate_motors(action)
         if self.agent_body.body_type == BodyTypesEnum.CLIMBER: self.climbing_dynamics.before_step_climbing_dynamics(action, self.agent_body, self.world)
         self.world.Step(1.0 / FPS, 6 * 30, 2 * 30)
         if self.agent_body.body_type == BodyTypesEnum.CLIMBER: self.climbing_dynamics.after_step_climbing_dynamics(self.world.contactListener, self.world)
         self.water_dynamics.calculate_forces(self.world.contactListener.fixture_pairs)
-        
+
         state = self._get_state()
         pos = self.agent_body.reference_head_object.position
         vel = self.agent_body.reference_head_object.linearVelocity
         is_under_water = pos.y <= self.water_y
         self.scroll = [pos[0] - self.rendering_viewer_w / SCALE / 5, pos[1] - self.rendering_viewer_h / SCALE / 2.5]
-        
+
         reward = 0
         info = {}
 
-        shaping = self.reward_params['progress_multiplier'] * pos[0] / SCALE 
+        shaping = self.reward_params['progress_multiplier'] * pos[0] / SCALE
         if self.prev_shaping is not None: reward += shaping - self.prev_shaping
         self.prev_shaping = shaping
         reward += self.reward_params['velocity_multiplier'] * vel.x
-        
+
         if self.agent_body.body_type == BodyTypesEnum.WALKER and len(self.agent_body.motors) == 4:
             right_foot = self.agent_body.motors[1].userData.contact_body
             left_foot = self.agent_body.motors[3].userData.contact_body
-            
+
             air_time_bonus = 0.0
             if not right_foot.userData.has_contact:
                 air_time_bonus += self.reward_params.get('foot_air_time_bonus', 0.0)
             if not left_foot.userData.has_contact:
                 air_time_bonus += self.reward_params.get('foot_air_time_bonus', 0.0)
             reward += air_time_bonus
-            
+
             right_hip_speed = self.agent_body.motors[0].speed
             left_hip_speed = self.agent_body.motors[2].speed
             if right_hip_speed * left_hip_speed < 0:
                 reward += self.reward_params.get('gait_bonus', 0.0)
-        
+
         if self.reward_params.get('standing_bonus_multiplier', 0.0) > 0 and not is_under_water:
             if len(self.agent_body.motors) >= 2:
-                knee_joints = self.agent_body.motors[-2:] 
+                knee_joints = self.agent_body.motors[-2:]
                 knee_straight_bonus = 0.0
                 for joint in knee_joints:
                     normalized_angle = (joint.angle - joint.lowerLimit) / (joint.upperLimit - joint.lowerLimit)
@@ -312,7 +313,7 @@ class ParametricContinuousParkour(gym.Env, EzPickle):
                 reward += self.reward_params['standing_bonus_multiplier'] * knee_straight_bonus
 
         reward -= self.reward_params['body_angle_penalty'] * abs(state[0])
-        
+
         ground_y = TERRAIN_HEIGHT
         current_x_idx = int(pos.x / TERRAIN_STEP)
         if 0 <= current_x_idx < len(self.terrain_ground_y):
@@ -321,26 +322,26 @@ class ParametricContinuousParkour(gym.Env, EzPickle):
 
         if current_height_from_ground < self.agent_body.AGENT_CENTER_HEIGHT * 0.5 and not is_under_water:
             reward -= self.reward_params['low_hull_penalty']
-            
+
         torque_penalty = sum(self.agent_body.TORQUE_PENALTY * self.reward_params['torque_penalty_multiplier'] * np.clip(np.abs(a), 0, 1) for a in action)
         reward -= torque_penalty
-        
+
         if abs(pos.x - self.last_progress_x) < 0.01: self.stagnation_counter += 1
         else: self.stagnation_counter = 0; self.last_progress_x = pos.x
         if self.stagnation_counter > 100: reward -= self.reward_params['stagnation_penalty']
-        
+
         terminated = False
         is_fall = False
         if abs(state[0]) > 1.5: self.flipped_counter += 1
         else: self.flipped_counter = 0
-        
-        if self.flipped_counter > self.flip_termination_steps: 
+
+        if self.flipped_counter > self.flip_termination_steps:
             reward = -100; terminated = True; is_fall = True
-        if self.critical_contact or pos[0] < 0 or is_agent_dead: 
+        if self.critical_contact or pos[0] < 0 or is_agent_dead:
             reward = -100; terminated = True; is_fall = True
-        if pos[0] > (TERRAIN_LENGTH + self.TERRAIN_STARTPAD - TERRAIN_END) * TERRAIN_STEP: 
+        if pos[0] > (TERRAIN_LENGTH + self.TERRAIN_STARTPAD - TERRAIN_END) * TERRAIN_STEP:
             terminated = True
-            
+
         self.episodic_reward += reward
         truncated = self.ts >= self.horizon
 
@@ -351,7 +352,7 @@ class ParametricContinuousParkour(gym.Env, EzPickle):
             info['episode'] = { 'r': self.episodic_reward, 'l': self.ts, 'final_progress_x': pos[0] }
 
         if self.render_mode == "human": self.render()
-        
+
         return state, reward, terminated, truncated, info
 
     def _generate_terrain(self):
@@ -388,12 +389,12 @@ class ParametricContinuousParkour(gym.Env, EzPickle):
         self.fd_water.shape.vertices = water_poly; t = self.world.CreateStaticBody(fixtures=self.fd_water, userData=CustomUserData("water", CustomUserDataObjectTypes.WATER))
         c = (0.465, 0.676, 0.898); t.color1 = c; t.color2 = c; water_body = t
         self.terrain.extend(terrain_creepers); self.terrain.append(water_body); self.terrain.reverse()
-        
+
     def _SET_RENDERING_VIEWPORT_SIZE(self, width, height, keep_ratio=True):
         self.rendering_viewer_w = width
         if keep_ratio or height is None: self.rendering_viewer_h = int(self.rendering_viewer_w / (VIEWPORT_W / VIEWPORT_H))
         else: self.rendering_viewer_h = height
-        
+
     def close(self):
         if self.viewer: self.viewer.close(); self.viewer = None
         self._destroy()

@@ -2,7 +2,7 @@
 import Box2D
 from Box2D.b2 import (edgeShape, circleShape, fixtureDef, polygonShape, revoluteJointDef, contactListener)
 from copy import copy
-from TeachMyAgent.environments.envs.utils.custom_user_data import CustomUserDataObjectTypes
+from TeachMyAgent.environments.envs.utils.custom_user_data import CustomUserDataObjectTypes, CustomUserData
 import numpy as np
 
 
@@ -177,6 +177,12 @@ class WaterContactDetector(contactListener):
 
     def BeginContact(self, contact):
         fA, fB = contact.fixtureA, contact.fixtureB
+        # START FIX: Add safety checks
+        if not (hasattr(fA, 'body') and hasattr(fB, 'body') and fA.body and fB.body and
+                hasattr(fA.body, 'userData') and hasattr(fB.body, 'userData') and
+                fA.body.userData and fB.body.userData):
+            return
+        # END FIX
         if fA.body.userData.object_type == CustomUserDataObjectTypes.WATER and \
            fB.body.userData.object_type == CustomUserDataObjectTypes.BODY_OBJECT:
             self.fixture_pairs.append((fA, fB))
@@ -188,10 +194,10 @@ class WaterContactDetector(contactListener):
         '''Safely remove fixture pairs when contact ends.'''
         fA, fB = contact.fixtureA, contact.fixtureB
 
-        # START FIX: Thêm các bước kiểm tra an toàn toàn diện để ngăn lỗi sập
+        # START FIX: Add comprehensive safety checks to prevent crashes
         if not (hasattr(fA, 'body') and hasattr(fB, 'body') and fA.body and fB.body and
                 hasattr(fA.body, 'userData') and hasattr(fB.body, 'userData') and
-                fA.body.userData and fB.body.userData):
+                isinstance(fA.body.userData, CustomUserData) and isinstance(fB.body.userData, CustomUserData)):
             return
         # END FIX
 

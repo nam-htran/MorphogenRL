@@ -14,7 +14,9 @@ from TeachMyAgent.environments.envs.bodies.BodiesEnum import BodiesEnum
 from utils.env_utils import build_and_setup_env, setup_render_window 
 from preprocessing import convert_weight
 from scripts import train_ppo, train_acl, train_marl
-from run import ray_init_and_run, _calculate_dynamic_threshold, load_config
+# START CHANGE: Remove import of deleted function
+from run import ray_init_and_run, load_config
+# END CHANGE
 
 def print_header(text, char='='):
     width = 80
@@ -35,7 +37,7 @@ def run_test(func, test_name, args_namespace=None):
         traceback.print_exc()
         return None, False
 
-# --- Các hàm test sanity (giữ nguyên) ---
+# --- Sanity check functions remain the same ---
 def test_body_creation():
     """Attempts to instantiate every body in BodiesEnum."""
     print("Testing instantiation of all agent bodies...")
@@ -137,33 +139,7 @@ def test_rendering_popup(args):
             env.close()
             print("  - Environment and rendering window closed successfully.")
 
-def test_dynamic_threshold_calculation(ppo_model_path: str, acl_config: dict):
-    """
-    Tests the logic for calculating a dynamic mastery threshold for ACL.
-    Returns the calculated threshold.
-    """
-    print("Testing dynamic mastery threshold calculation logic...")
-    
-    acl_args_dict = acl_config.copy()
-    acl_args_dict['render'] = False
-    acl_args = SimpleNamespace(**acl_args_dict)
-
-    calculated_threshold = _calculate_dynamic_threshold(
-        model_path=ppo_model_path,
-        acl_config=acl_config,
-        acl_args=acl_args
-    )
-
-    assert isinstance(calculated_threshold, float), f"Threshold should be a float, but got {type(calculated_threshold)}"
-    
-    dynamic_settings = acl_config.get('dynamic_threshold_settings', {})
-    if dynamic_settings.get('enabled', False):
-        min_threshold = dynamic_settings.get('min_threshold', 0.0)
-        assert calculated_threshold >= min_threshold, \
-            f"Calculated threshold {calculated_threshold} is below the minimum {min_threshold}"
-    
-    print(f"Dynamic threshold calculated successfully: {calculated_threshold:.2f}")
-    return calculated_threshold
+# REMOVED: The test_dynamic_threshold_calculation function is no longer needed.
 
 def main(args): 
     print_header("STARTING EXPANDED PROJECT TEST SUITE")
@@ -202,43 +178,42 @@ def main(args):
     _, success = run_test(convert_weight.convert_tf1_to_pytorch, "Prerequisite: Convert Weight")
     if not success: failed_tests.append("Convert Weight")
         
-    ppo_model_path = None
-    
     if not failed_tests:
         ppo_test_config = ppo_config.copy()
-        # GHI ĐÈ các tham số step để test nhanh
         ppo_test_config['total_timesteps'] = 512
-        ppo_test_config['n_envs'] = 2 # Giảm số env để test nhanh hơn
+        ppo_test_config['n_envs'] = 2
         if 'ppo_config' in ppo_test_config:
-            ppo_test_config['ppo_config']['n_steps'] = 128 # BẮT BUỘC: n_steps * n_envs <= total_timesteps
+            ppo_test_config['ppo_config']['n_steps'] = 128
         
         ppo_test_config['run_id'] = "test_suite_ppo"
         ppo_test_config['render'] = False
         ppo_args = SimpleNamespace(**ppo_test_config)
         
-        ppo_model_path, success = run_test(train_ppo.main, "PPO Micro-Training", args_namespace=ppo_args)
+        _, success = run_test(train_ppo.main, "PPO Micro-Training", args_namespace=ppo_args)
         if not success: failed_tests.append("PPO Micro-Training")
     
-    dynamic_threshold = None
-    if ppo_model_path and not failed_tests:
-        dynamic_threshold, success = run_test(lambda: test_dynamic_threshold_calculation(ppo_model_path, acl_config), "Dynamic Threshold Calculation")
-        if not success: failed_tests.append("Dynamic Threshold Calculation")
-
-    if ppo_model_path and dynamic_threshold is not None and not failed_tests:
+    # START CHANGE: Removed dynamic threshold test. Rewrote ACL test to be independent.
+    if not failed_tests:
         acl_test_config = acl_config.copy()
         acl_test_config['total_stages'] = 1
         acl_test_config['student_steps_per_stage'] = 256
-        acl_test_config['n_envs'] = 2 # Giảm số env để test nhanh hơn
+        acl_test_config['n_envs'] = 2
         
         acl_test_config['run_id'] = "test_suite_acl"
-        acl_test_config['pretrained_model_path'] = ppo_model_path
-        acl_test_config['mastery_threshold'] = dynamic_threshold
+        # REMOVED: pretrained_model_path is no longer used
+        # Set a fixed, low threshold for testing purposes
+        acl_test_config['mastery_threshold'] = 200.0
         acl_test_config['render'] = False
+
+        # Turn off dynamic threshold calculation for the test
+        if 'dynamic_threshold_settings' in acl_test_config:
+            acl_test_config['dynamic_threshold_settings']['enabled'] = False
 
         acl_args = SimpleNamespace(**acl_test_config)
         
-        _, success = run_test(train_acl.main, "ACL Micro-Training (with Transfer)", args_namespace=acl_args)
+        _, success = run_test(train_acl.main, "ACL Micro-Training (from scratch)", args_namespace=acl_args)
         if not success: failed_tests.append("ACL Micro-Training")
+    # END CHANGE
     
     if not failed_tests:
         marl_test_config = marl_config.copy()
@@ -246,7 +221,6 @@ def main(args):
         marl_test_config['run_id'] = "test_suite_marl"
         marl_test_config['num_workers'] = 0 
         marl_test_config['num_gpus'] = 0
-
 
         marl_args = SimpleNamespace(**marl_test_config)
 

@@ -1,12 +1,12 @@
 # TeachMyAgent/environments/envs/Box2D_dynamics/climbing_dynamics.py
 import Box2D
 from Box2D.b2 import (edgeShape, circleShape, fixtureDef, polygonShape, revoluteJointDef, contactListener)
-from TeachMyAgent.environments.envs.utils.custom_user_data import CustomUserDataObjectTypes
+from TeachMyAgent.environments.envs.utils.custom_user_data import CustomUserDataObjectTypes, CustomUserData
 
 class ClimbingDynamics(object):
     def __init__(self):
         self.joints_to_destroy = []
-        
+
     def before_step_climbing_dynamics(self, actions, body, world):
         '''
         Check if sensors should grasp or release.
@@ -34,7 +34,7 @@ class ClimbingDynamics(object):
         for joint in self.joints_to_destroy:
             world.DestroyJoint(joint)
         self.joints_to_destroy.clear()
-        
+
         for sensor in contact_detector.contact_dictionaries:
             if len(contact_detector.contact_dictionaries[sensor]) > 0 and \
                     sensor.userData.ready_to_attach and not sensor.userData.has_joint:
@@ -71,7 +71,15 @@ class ClimbingContactDetector(contactListener):
         self.contact_dictionaries = {}
 
     def BeginContact(self, contact):
-        bodies = [contact.fixtureA.body, contact.fixtureB.body]
+        fA, fB = contact.fixtureA, contact.fixtureB
+        # START FIX: Add safety checks
+        if not (hasattr(fA, 'body') and hasattr(fB, 'body') and fA.body and fB.body and
+                hasattr(fA.body, 'userData') and hasattr(fB.body, 'userData') and
+                isinstance(fA.body.userData, CustomUserData) and isinstance(fB.body.userData, CustomUserData)):
+            return
+        # END FIX
+
+        bodies = [fA.body, fB.body]
         for idx, body in enumerate(bodies):
             if body.userData.object_type == CustomUserDataObjectTypes.BODY_SENSOR and body.userData.check_contact:
                 other_body = bodies[(idx + 1) % 2]
@@ -88,10 +96,10 @@ class ClimbingContactDetector(contactListener):
     def EndContact(self, contact):
         fA, fB = contact.fixtureA, contact.fixtureB
 
-        # START FIX: Thêm các bước kiểm tra an toàn toàn diện
+        # START FIX: Add comprehensive safety checks
         if not (hasattr(fA, 'body') and hasattr(fB, 'body') and fA.body and fB.body and
                 hasattr(fA.body, 'userData') and hasattr(fB.body, 'userData') and
-                fA.body.userData and fB.body.userData):
+                isinstance(fA.body.userData, CustomUserData) and isinstance(fB.body.userData, CustomUserData)):
             return
         # END FIX
 
